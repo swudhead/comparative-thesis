@@ -3,35 +3,45 @@
     "name": "comparative-thesis",
     "slug": "comparative-thesis",
     "version": "1.0.0",
-
     "web": {
       "favicon": "./assets/favicon.png"
     },
-
     "experiments": {
       "tsconfigPaths": true
     },
-
-    "plugins": [],
-
+    "plugins": [
+      [
+        "@rnmapbox/maps",
+        {
+          "RNMapboxMapsDownloadToken": "sk.eyJ1Ijoia2F6a2VlIiwiYSI6ImNtOXdkMnMyZjBybWIybXM5enRsdjl1dGQifQ.LkJ0GLCo5X8TAgpEiPJSMg"
+        }
+      ]
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-
     "userInterfaceStyle": "light",
-
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
-    "assetBundlePatterns": ["**/*"],
+    "assetBundlePatterns": [
+      "**/*"
+    ],
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kazkee.comparativethesis"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
+      },
+      "package": "com.kazkee.comparativethesis"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "f0c56e46-523a-48c1-8573-66315e2e9bf5"
       }
     }
   }
