@@ -17,12 +17,14 @@ const AlgorithmComparisonUI = ({ mapLoaded, onAlgorithmSelect, onStartPathfindin
   const [algorithmInfo, setAlgorithmInfo] = useState({});
   const [comparisonResults, setComparisonResults] = useState(null);
 
+
+
   // Mock data for algorithm comparison
   const algorithms = [
     { id: 'dijkstra', name: 'Dijkstra', description: 'Optimal for weighted graphs' },
     { id: 'a-star', name: 'A* Search', description: 'Uses heuristics for faster searches' },
-    { id: 'bellman-ford', name: 'Bellman-Ford', description: 'Handles negative edge weights' },
-    { id: 'floyd-warshall', name: 'Floyd-Warshall', description: 'All-pairs shortest path' }
+    { id: 'bellman-ford', name: 'D* Star', description: 'Handles negative edge weights' },
+    { id: 'floyd-warshall', name: 'D* Star Lite', description: 'All-pairs shortest path' }
   ];
 
   // Mock function to simulate algorithm computation
