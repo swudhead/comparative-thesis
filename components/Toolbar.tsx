@@ -9,25 +9,8 @@ type ToolbarProps = {
 
 const Toolbar: React.FC<ToolbarProps> = ({ title }) => {
   const insets = useSafeAreaInsets();
-  
-  return (
-    <View 
-      style={[
-        styles.toolbar, 
-        { paddingTop: Platform.OS === 'ios' ? insets.top : insets.top + 8 }
-      ]}
-    >
-      <TouchableOpacity style={styles.toolbarButton}>
-        <Menu size={24} color="#333" />
-      </TouchableOpacity>
-      
-      <Text style={styles.toolbarTitle}>{title}</Text>
-      
-      <TouchableOpacity style={styles.toolbarButton}>
-        <Layers size={24} color="#333" />
-      </TouchableOpacity>
-    </View>
-  );
+
+  return <View></View>;
 };
 
 const styles = StyleSheet.create({

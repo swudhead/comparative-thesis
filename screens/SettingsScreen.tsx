@@ -17,6 +17,7 @@ export default function SettingsScreen() {
         {
           text: "Cancel",
           style: "cancel"
+          
         },
         { 
           text: "Reset", 
