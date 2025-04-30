@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   StyleSheet,
   Text,
@@ -44,14 +44,21 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   selectionMode,
 }) => {
   const [expanded, setExpanded] = useState(false);
-  const panelHeight = React.useRef(new Animated.Value(200)).current;
+  const panelHeight = React.useRef(new Animated.Value(240)).current;
 
   // Import algorithms from utils
   const { algorithms } = require('../utils/algorithms');
 
+  // Auto-expand panel when comparisonResults are available
+  useEffect(() => {
+    if (comparisonResults && !expanded) {
+      toggleExpansion();
+    }
+  }, [comparisonResults, expanded]);
+
   // Toggle control panel expansion
   const toggleExpansion = () => {
-    const targetHeight = expanded ? 200 : 420;
+    const targetHeight = expanded ? 240 : 420;
 
     Animated.spring(panelHeight, {
       toValue: targetHeight,
@@ -66,16 +73,16 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   return (
     <Animated.View style={[styles.controlPanel, { height: panelHeight }]}>
     <View style={styles.headerBar}>
-    <Text style={styles.headerText}>Algorithm
-    Controls</Text>
+    <Text style={styles.headerText}>Algorithm Controls</Text>
     <TouchableOpacity onPress={toggleExpansion} style={styles.expandButton}>
     <Text style={styles.expandButtonText}>{expanded ? '▲' : '▼'}</Text>
     </TouchableOpacity>
     </View>
 
-    {/* Algorithm Selection */}
+    {/* Algorithm selection */}
+    <View style={styles.algorithmScrollContainer}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.algorithmScroll}>
-    {algorithms.map((algorithm) => (
+    {algorithms.map((algorithm: algorithm) => (
       <TouchableOpacity
       key={algorithm.id}
       onPress={() => onAlgorithmSelect(algorithm)}
@@ -97,6 +104,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       </TouchableOpacity>
     ))}
     </ScrollView>
+    </View>
 
     {/* Action buttons */}
     <View style={styles.actionContainer}>
@@ -108,10 +116,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       selectionMode === 'start' ? styles.activeSelectionButton : null,
       startPoint ? styles.activeButton : styles.disabledButton,
     ]}
-    onPress={() => {
-      console.log("Set Start button pressed, current selectionMode:", selectionMode);
-      onSelectStartPoint();
-    }}
+    onPress={onSelectStartPoint}
     >
     <Text style={startPoint ? styles.setPointButtonText : styles.disabledButtonText}>
     {startPoint
@@ -131,10 +136,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     selectionMode === 'end' ? styles.activeSelectionButton : null,
     endPoint ? styles.activeButton : styles.disabledButton,
   ]}
-  onPress={() => {
-    console.log("Set End button pressed, current selectionMode:", selectionMode);
-    onSelectEndPoint();
-  }}
+  onPress={onSelectEndPoint}
   >
   <Text style={endPoint ? styles.setPointButtonText : styles.disabledButtonText}>
   {endPoint
@@ -148,7 +150,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
 
   <View style={styles.actionButtonsRow}>
   <TouchableOpacity
-  style={styles.utilityButton}
+  style={[
+    styles.utilityButton,
+    (!startPoint || !endPoint) ? styles.disabledButton : null,
+  ]}
   onPress={onSwapPoints}
   disabled={!startPoint || !endPoint}
   >
@@ -160,7 +165,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   </TouchableOpacity>
 
   <TouchableOpacity
-  style={styles.utilityButton}
+  style={[
+    styles.utilityButton,
+    (!startPoint && !endPoint) ? styles.disabledButton : null,
+  ]}
   onPress={onClearPoints}
   disabled={!startPoint && !endPoint}
   >
@@ -191,30 +199,33 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   {/* Results Section */}
   {expanded && (
     <ScrollView style={styles.resultsScrollView} contentContainerStyle={styles.resultsScrollContent}>
-    {comparisonResults && selectedAlgorithm && (
+    {comparisonResults && selectedAlgorithm ? (
       <View style={styles.resultsContainer}>
       <Text style={styles.resultsTitle}>Results for {selectedAlgorithm?.name}:</Text>
-      <View style={styles.resultsBox}>
-      <View style={styles.resultItem}>
-      <Text style={styles.resultLabel}>Time</Text>
-      <Text style={styles.resultValue}>
-      {comparisonResults[selectedAlgorithm.id]?.time || '---'}
-      </Text>
-      </View>
-      <View style={styles.resultItem}>
-      <Text style={styles.resultLabel}>Distance</Text>
-      <Text style={styles.resultValue}>
-      {comparisonResults[selectedAlgorithm.id]?.distance || '---'}
-      </Text>
-      </View>
-      <View style={styles.resultItem}>
-      <Text style={styles.resultLabel}>Nodes</Text>
-      <Text style={styles.resultValue}>
-      {comparisonResults[selectedAlgorithm.id]?.nodes || '---'}
-      </Text>
-      </View>
-      </View>
-
+      {comparisonResults[selectedAlgorithm.id] ? (
+        <View style={styles.resultsBox}>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Time</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.time || '---'}
+        </Text>
+        </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Distance</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.distance || '---'}
+        </Text>
+        </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Nodes</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.nodes || '---'}
+        </Text>
+        </View>
+        </View>
+      ) : (
+        <Text style={styles.resultValue}>No results available for {selectedAlgorithm.name}</Text>
+      )}
       <View style={styles.descriptionBox}>
       <Text style={styles.descriptionText}>
       {selectedAlgorithm?.id === 'dijkstra' &&
@@ -228,6 +239,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
               </Text>
               </View>
               </View>
+    ) : (
+      <Text style={styles.resultValue}>No results available</Text>
     )}
     </ScrollView>
   )}
@@ -271,10 +284,15 @@ const styles = StyleSheet.create({
     fontSize: 18,
     color: '#2196F3',
   },
+  algorithmScrollContainer: {
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
   algorithmScroll: {
     paddingVertical: 12,
     paddingHorizontal: 8,
     flexGrow: 0,
+    height: 60,
   },
   algorithmButton: {
     marginHorizontal: 8,
@@ -284,6 +302,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#f0f0f0',
     borderWidth: 1,
     borderColor: '#e0e0e0',
+    justifyContent: 'center',
+    alignItems: 'center',
+    height: 36,
   },
   selectedAlgorithmButton: {
     backgroundColor: '#2196F3',
@@ -299,7 +320,7 @@ const styles = StyleSheet.create({
   },
   actionContainer: {
     paddingHorizontal: 16,
-    paddingBottom: 12,
+    paddingVertical: 12,
   },
   pointButtonsRow: {
     flexDirection: 'row',
@@ -359,6 +380,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#e0e0e0',
     marginRight: 8,
+    width: 80,
   },
   utilityButtonText: {
     color: '#555',
@@ -376,6 +398,7 @@ const styles = StyleSheet.create({
     shadowRadius: 1.41,
     elevation: 2,
     alignItems: 'center',
+    justifyContent: 'center',
     flex: 1,
   },
   findPathButtonText: {

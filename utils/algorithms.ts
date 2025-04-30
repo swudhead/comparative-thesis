@@ -1,4 +1,4 @@
-// Algorithm types and data
+// utils/algorithms.ts
 export type algorithm = {
   id: string;
   name: string;
@@ -111,7 +111,7 @@ export async function dijkstraPathfinding(
   try {
     const { path, distance, waypoints } = await fetchDirections(start, end);
 
-    // Simulate nodes visited by sampling points from the path
+    // Simulate visited nodes by sampling points from the path
     const visitedNodes: number[][] = [];
     const step = Math.max(1, Math.floor(path.length / 5)); // Sample up to 5 intermediate points
     for (let i = 0; i < path.length; i += step) {
@@ -125,7 +125,7 @@ export async function dijkstraPathfinding(
       visitedNodes.push(path[path.length - 1]);
     }
 
-    const nodesVisited = visitedNodes.length;
+    const nodesVisited = path.length; // Use total path nodes, not sampled visitedNodes
 
     const endTime = performance.now();
     console.log(`Computed distance in dijkstraPathfinding: ${distance} km`);

@@ -15,7 +15,7 @@ type MapViewProps = {
     algorithm: string;
     visitedNodes?: number[][];
   } | null;
-  onPointSelected: (pointType: 'start' | 'end', coordinates: { lat: number; lng: number }) => void;
+  onPointSelected: (pointType: 'start' | 'end', coordinates: { lat: number; lng: number }, edgeCoordinates?: number[][]) => void;
   selectionMode: 'start' | 'end' | 'none';
   onTapMap: (event: any) => void;
 };
@@ -35,16 +35,14 @@ const MapView: React.FC<MapViewProps> = ({
     centerCoordinate: [123.19549, 13.62617], // Naga City coordinates
   });
 
-  // State to cache node data for edge snapping
   const [nodes, setNodes] = useState<Map<string, { lat: number; lng: number }>>(new Map());
-  const [nodesFetched, setNodesFetched] = useState(false); // Track if nodes have been fetched
+  const [nodesFetched, setNodesFetched] = useState(false);
 
-  // Memoize onError to prevent unnecessary re-renders
   const stableOnError = useCallback((error: string) => {
     onError(error);
   }, [onError]);
 
-  // Fetch nodes for edge snapping (run once on mount)
+  // Fetch nodes for edge snapping (improved to cover a larger area)
   useEffect(() => {
     if (nodesFetched) {
       console.log('Nodes already fetched, skipping fetch.');
@@ -54,12 +52,20 @@ const MapView: React.FC<MapViewProps> = ({
     const fetchNodes = async () => {
       const accessToken = 'pk.eyJ1Ijoia2F6a2VlIiwiYSI6ImNtOXd1cWNnajA5ZDQybHNnaHcycjlkbjUifQ.oCwTlpov4vnih1yvkqLrZA';
       const nodeTileset = 'kazkee.04ydv29e';
-      const radius = 15000;
+      const radius = 20000; // Increased radius to ensure all nodes are fetched
       const centerLng = 123.19549;
       const centerLat = 13.62617;
 
+      // Multiple query points to cover a larger area
+      const queryPoints = [
+        { lng: centerLng, lat: centerLat },
+        { lng: centerLng + 0.05, lat: centerLat + 0.05 },
+        { lng: centerLng - 0.05, lat: centerLat - 0.05 },
+        { lng: centerLng + 0.05, lat: centerLat - 0.05 },
+        { lng: centerLng - 0.05, lat: centerLat + 0.05 },
+      ];
+
       const nodesMap = new Map<string, { lat: number; lng: number }>();
-      const queryPoints = [{ lng: centerLng, lat: centerLat }];
 
       for (const point of queryPoints) {
         const nodeUrl = `https://api.mapbox.com/v4/${nodeTileset}/tilequery/${point.lng},${point.lat}.json?radius=${radius}&layers=naga_nodes_for_mapbox-dkbn5x&access_token=${accessToken}`;
@@ -73,7 +79,7 @@ const MapView: React.FC<MapViewProps> = ({
           }
 
           if (!data.features || data.features.length === 0) {
-            console.log('No nodes found at this location.');
+            console.log(`No nodes found at location: [${point.lng}, ${point.lat}]`);
             continue;
           }
 
@@ -94,16 +100,17 @@ const MapView: React.FC<MapViewProps> = ({
 
       if (nodesMap.size === 0) {
         stableOnError('No nodes found in the area. Please try a different location.');
+      } else {
+        console.log(`Total nodes fetched: ${nodesMap.size}`);
       }
 
       setNodes(nodesMap);
-      setNodesFetched(true); // Mark nodes as fetched
+      setNodesFetched(true);
     };
 
     fetchNodes();
   }, [stableOnError, nodesFetched]);
 
-  // Update camera when points are selected
   useEffect(() => {
     if (startPoint && endPoint) {
       const centerLat = (startPoint.lat + endPoint.lat) / 2;
@@ -117,6 +124,8 @@ const MapView: React.FC<MapViewProps> = ({
       if (maxDiff > 0.05) newZoom = 12;
       else if (maxDiff > 0.02) newZoom = 13;
 
+      console.log(`Updating camera: center=[${centerLng}, ${centerLat}], zoom=${newZoom}`);
+
       setCamera({
         zoomLevel: newZoom,
         centerCoordinate: [centerLng, centerLat],
@@ -124,7 +133,6 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [startPoint, endPoint]);
 
-  // Get color for path based on algorithm
   const getPathColor = (algorithm: string) => {
     switch (algorithm) {
       case 'dijkstra':
@@ -140,7 +148,6 @@ const MapView: React.FC<MapViewProps> = ({
     }
   };
 
-  // Handle feature selection (nodes or edges)
   const handleFeaturePress = (event: any, source: 'nodes' | 'edges') => {
     console.log(`${source} press event:`, JSON.stringify(event, null, 2));
     if (!event?.features?.length) {
@@ -150,29 +157,47 @@ const MapView: React.FC<MapViewProps> = ({
     }
 
     const feature = event.features[0];
-    let lng: number, lat: number;
 
     if (source === 'nodes' && feature?.geometry?.type === 'Point' && feature.geometry.coordinates) {
-      [lng, lat] = feature.geometry.coordinates;
+      const [lng, lat] = feature.geometry.coordinates;
+      console.log(`Feature selected from nodes: lat=${lat}, lng=${lng}, selectionMode=${selectionMode}`);
+
+      if (selectionMode === 'start') {
+        onPointSelected('start', { lat, lng });
+      } else if (selectionMode === 'end') {
+        onPointSelected('end', { lat, lng });
+      } else {
+        console.log('Node tapped but not in selection mode');
+      }
     } else if (source === 'edges') {
       const sourceProp = feature.properties.u || feature.properties.source || feature.properties.Source || feature.properties.from || feature.properties.From;
       const targetProp = feature.properties.v || feature.properties.target || feature.properties.Target || feature.properties.to || feature.properties.To;
 
       if (!sourceProp || !targetProp) {
         console.log('Edge missing u/v properties:', feature.properties);
-        stableOnError('Selected edge is missing node information. Please select a different edge or node.');
+        stableOnError('Selected edge is missing node information. Please select a different edge.');
         return;
       }
+
+      console.log(`Edge properties - source: ${sourceProp}, target: ${targetProp}`);
+      console.log('Available nodes:', Array.from(nodes.keys()));
 
       const sourceNode = nodes.get(sourceProp.toString());
       const targetNode = nodes.get(targetProp.toString());
 
       if (!sourceNode || !targetNode) {
         console.log('Edge nodes not found - source:', sourceProp, 'target:', targetProp);
-        stableOnError('Selected edge references nodes that are not available. Please select a different edge or node.');
+        stableOnError('Selected edge references nodes that are not available. Please ensure all nodes are loaded.');
         return;
       }
 
+      const edgeCoordinates = [
+        [sourceNode.lng, sourceNode.lat],
+        [targetNode.lng, targetNode.lat],
+      ];
+      console.log('Edge coordinates:', edgeCoordinates);
+
+      // Determine the nearest node to the tap point for start/end selection
       const tapPoint = { lat: event.coordinates.latitude, lng: event.coordinates.longitude };
       const sourceDistance = Math.sqrt(
         Math.pow(sourceNode.lng - tapPoint.lng, 2) + Math.pow(sourceNode.lat - tapPoint.lat, 2)
@@ -182,26 +207,24 @@ const MapView: React.FC<MapViewProps> = ({
       );
 
       const nearest = sourceDistance < targetDistance ? sourceNode : targetNode;
-      lng = nearest.lng;
-      lat = nearest.lat;
+      const lng = nearest.lng;
+      const lat = nearest.lat;
+
+      console.log(`Feature selected from edges: lat=${lat}, lng=${lng}, selectionMode=${selectionMode}`);
+
+      if (selectionMode === 'start') {
+        onPointSelected('start', { lat, lng }, edgeCoordinates);
+      } else if (selectionMode === 'end') {
+        onPointSelected('end', { lat, lng }, edgeCoordinates);
+      } else {
+        console.log('Edge tapped but not in selection mode');
+      }
     } else {
       console.log(`Invalid feature or coordinates in ${source} press event`);
       stableOnError('Invalid feature selected. Please select a different edge or node.');
-      return;
-    }
-
-    console.log(`Feature selected from ${source}: lat=${lat}, lng=${lng}, selectionMode=${selectionMode}`);
-
-    if (selectionMode === 'start') {
-      onPointSelected('start', { lat, lng });
-    } else if (selectionMode === 'end') {
-      onPointSelected('end', { lat, lng });
-    } else {
-      console.log(`Feature tapped from ${source} but not in selection mode`);
     }
   };
 
-  // Handle map taps
   const onTapMapHandler = (event: any) => {
     console.log("Map tapped in MapView:", JSON.stringify(event, null, 2));
     onTapMap(event);
@@ -211,11 +234,23 @@ const MapView: React.FC<MapViewProps> = ({
     console.log("Path result updated:", pathResult);
     if (pathResult && pathResult.coordinates) {
       console.log("Path coordinates to render:", pathResult.coordinates);
+      pathResult.coordinates.forEach((coord, index) => {
+        if (!Array.isArray(coord) || coord.length !== 2 || typeof coord[0] !== 'number' || typeof coord[1] !== 'number') {
+          console.error(`Invalid coordinate at index ${index}:`, coord);
+          stableOnError(`Invalid path coordinate at index ${index}. Path rendering may fail.`);
+        }
+      });
     }
     if (pathResult && pathResult.visitedNodes) {
       console.log("Visited nodes to render:", pathResult.visitedNodes);
+      pathResult.visitedNodes.forEach((coord, index) => {
+        if (!Array.isArray(coord) || coord.length !== 2 || typeof coord[0] !== 'number' || typeof coord[1] !== 'number') {
+          console.error(`Invalid visited node coordinate at index ${index}:`, coord);
+          stableOnError(`Invalid visited node coordinate at index ${index}. Visited nodes rendering may fail.`);
+        }
+      });
     }
-  }, [pathResult]);
+  }, [pathResult, stableOnError]);
 
   return (
     <MapboxGL.MapView
@@ -287,6 +322,38 @@ const MapView: React.FC<MapViewProps> = ({
     />
     </MapboxGL.VectorSource>
 
+    {/* Path layer */}
+    {pathResult && pathResult.coordinates && pathResult.coordinates.length > 0 && (
+      <MapboxGL.ShapeSource
+      id="pathSource"
+      shape={{
+        type: 'Feature',
+        properties: {},
+        geometry: {
+          type: 'LineString',
+          coordinates: pathResult.coordinates,
+        },
+      }}
+      >
+      <MapboxGL.LineLayer
+      id="pathLayer"
+      style={{
+        lineColor: getPathColor(pathResult.algorithm),
+                                                                                   lineWidth: 4,
+                                                                                   lineCap: 'round',
+                                                                                   lineJoin: 'round',
+                                                                                   visibility: 'visible',
+                                                                                   lineOpacity: 1.0,
+      }}
+      aboveLayerID="edges-layer"
+      onError={(error: any) => {
+        console.error('Path layer rendering error:', error);
+        stableOnError('Failed to render path layer. Check console for details.');
+      }}
+      />
+      </MapboxGL.ShapeSource>
+    )}
+
     {/* Visited nodes layer */}
     {pathResult?.visitedNodes && pathResult.visitedNodes.length > 0 && (
       <MapboxGL.ShapeSource
@@ -316,32 +383,10 @@ const MapView: React.FC<MapViewProps> = ({
         circleStrokeColor: '#fff',
         visibility: 'visible',
       }}
-      minZoomLevel={10}
-      />
-      </MapboxGL.ShapeSource>
-    )}
-
-    {/* Path layer */}
-    {pathResult && pathResult.coordinates && pathResult.coordinates.length > 0 && (
-      <MapboxGL.ShapeSource
-      id="pathSource"
-      shape={{
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: pathResult.coordinates,
-        },
-      }}
-      >
-      <MapboxGL.LineLayer
-      id="pathLayer"
-      style={{
-        lineColor: getPathColor(pathResult.algorithm),
-                                                                                   lineWidth: 4,
-                                                                                   lineCap: 'round',
-                                                                                   lineJoin: 'round',
-                                                                                   visibility: 'visible', // Ensure visibility
+      aboveLayerID="nodes-layer"
+      onError={(error: any) => {
+        console.error('Visited nodes layer rendering error:', error);
+        stableOnError('Failed to render visited nodes layer. Check console for details.');
       }}
       />
       </MapboxGL.ShapeSource>
