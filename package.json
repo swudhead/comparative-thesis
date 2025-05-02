@@ -24,6 +24,8 @@
     "lodash": "^4.17.21",
     "lucide-react-native": "^0.503.0",
     "nativewind": "latest",
+    "pathfinding": "^0.4.18",
+    "priority-queue-typed": "^2.0.3",
     "react": "18.3.1",
     "react-hook-form": "^7.56.1",
     "react-native": "0.76.9",
@@ -35,10 +37,12 @@
     "react-native-screens": "^4.10.0",
     "react-native-svg": "^15.11.2",
     "react-query": "^3.39.3",
+    "tinyqueue": "^3.0.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
     "@babel/core": "^7.20.0",
+    "@react-native-community/cli": "latest",
     "@types/lodash": "^4.17.16",
     "@types/react": "~18.3.12",
     "@types/react-native": "^0.72.8",
