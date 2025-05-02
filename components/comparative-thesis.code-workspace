@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "comparative-thesis",
+			"path": ".."
+		},
+		{
+			"name": "utils",
+			"path": "../../../project/utils"
+		}
+	],
+	"settings": {}
+}

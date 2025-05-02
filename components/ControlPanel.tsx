@@ -217,7 +217,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         </Text>
         </View>
         <View style={styles.resultItem}>
-        <Text style={styles.resultLabel}>Nodes</Text>
+        <Text style={styles.resultLabel}>Nodes Visited</Text>
         <Text style={styles.resultValue}>
         {comparisonResults[selectedAlgorithm.id]?.nodes || '---'}
         </Text>
