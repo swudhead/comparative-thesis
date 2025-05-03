@@ -1,8 +1,9 @@
+// PathfindingComparison.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, Alert } from 'react-native';
 import MapView from './MapView';
 import ControlPanel from './ControlPanel';
-import { dijkstraPathfinding, bfsPathfinding, bellmanFordPathfinding, algorithm } from '../utils/algorithms';
+import { dijkstraPathfinding, gbfsPathfinding, bellmanFordPathfinding, algorithm } from '../utils/algorithms';
 
 interface Node {
   osmid: string;
@@ -54,6 +55,7 @@ const PathfindingComparison: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
   const [comparisonResults, setComparisonResults] = useState<Record<string, ComparisonResult> | null>(null);
+  const [showVisitedNodes, setShowVisitedNodes] = useState(false);
 
   const lastPathfindingInputs = useRef<string | null>(null);
 
@@ -100,6 +102,7 @@ const PathfindingComparison: React.FC = () => {
     setComparisonResults(null);
     setSelectionMode('none');
     setErrorMsg(null);
+    setShowVisitedNodes(false);
     lastPathfindingInputs.current = null;
   }, []);
 
@@ -111,6 +114,7 @@ const PathfindingComparison: React.FC = () => {
     setPathResult(null);
     setComparisonResults(null);
     setErrorMsg(null);
+    setShowVisitedNodes(false);
     lastPathfindingInputs.current = null;
   }, [startPoint, endPoint, startEdge, endEdge]);
 
@@ -143,13 +147,14 @@ const PathfindingComparison: React.FC = () => {
 
     setIsComputing(true);
     setErrorMsg(null);
+    setShowVisitedNodes(false);
 
     try {
       // Compute pathfinding for all algorithms
       const algorithmsToRun = [
         { id: 'dijkstra', func: () => dijkstraPathfinding(graph, startPoint, endPoint, 'dijkstra') },
                                       { id: 'a-star', func: () => dijkstraPathfinding(graph, startPoint, endPoint, 'a-star') },
-                                      { id: 'bfs', func: () => bfsPathfinding(graph, startPoint, endPoint) },
+                                      { id: 'gbfs', func: () => gbfsPathfinding(graph, startPoint, endPoint) },
                                       { id: 'bellman-ford', func: () => bellmanFordPathfinding(graph, startPoint, endPoint) },
       ];
 
@@ -158,13 +163,13 @@ const PathfindingComparison: React.FC = () => {
       for (const algo of algorithmsToRun) {
         const result = await algo.func();
         const totalDistance = result.distance * 1000; // Convert km to meters
-        const speed = 5.56; // meters per second
-        const travelTime = totalDistance / speed; // Estimated travel time in seconds
+        const speed = 4.17; // meters per second (15 km/h)
+  const travelTime = totalDistance / speed; // Estimated travel time in seconds
 
-        results[algo.id] = {
-          result,
-          travelTime: `${travelTime.toFixed(2)}s`,
-        };
+  results[algo.id] = {
+    result,
+    travelTime: `${travelTime.toFixed(2)}s`,
+  };
       }
 
       // Set pathResult for the selected algorithm
@@ -199,12 +204,12 @@ const PathfindingComparison: React.FC = () => {
                                       edgesExplored: results['a-star'].result.edgesExplored,
                                       pathNodeCount: results['a-star'].result.pathNodeCount,
         },
-        bfs: {
-          time: `${(results['bfs'].result.time / 1000).toFixed(2)}s`,
-                                      distance: `${results['bfs'].result.distance.toFixed(1)}km`,
-                                      nodes: results['bfs'].result.nodesVisited,
-                                      edgesExplored: results['bfs'].result.edgesExplored,
-                                      pathNodeCount: results['bfs'].result.pathNodeCount,
+        gbfs: {
+          time: `${(results['gbfs'].result.time / 1000).toFixed(2)}s`,
+                                      distance: `${results['gbfs'].result.distance.toFixed(1)}km`,
+                                      nodes: results['gbfs'].result.nodesVisited,
+                                      edgesExplored: results['gbfs'].result.edgesExplored,
+                                      pathNodeCount: results['gbfs'].result.pathNodeCount,
         },
         'bellman-ford': {
           time: `${(results['bellman-ford'].result.time / 1000).toFixed(2)}s`,
@@ -220,7 +225,6 @@ const PathfindingComparison: React.FC = () => {
       setIsComputing(false);
 
       console.log('Final pathResult set:', pathResult);
-      console.log('Final comparisonResults set:', newComparisonResults);
     } catch (error: any) {
       setErrorMsg(`Error computing path: ${error.message || 'Unknown error'}`);
       setIsComputing(false);
@@ -232,6 +236,7 @@ const PathfindingComparison: React.FC = () => {
     setPathResult(null);
     setComparisonResults(null);
     setErrorMsg(null);
+    setShowVisitedNodes(false);
     lastPathfindingInputs.current = null;
   }, []);
 
@@ -239,7 +244,7 @@ const PathfindingComparison: React.FC = () => {
     const descriptions: { [key: string]: string } = {
       dijkstra: "Dijkstra's algorithm guarantees the shortest path in a weighted graph but explores more nodes than A*.",
       'a-star': 'A* uses heuristics to optimize pathfinding, making it faster than Dijkstra in many cases.',
-      bfs: 'Breadth-First Search explores nodes level by level, finding the path with the fewest edges (ignoring weights).',
+      gbfs: 'Greedy Best-First Search prioritizes nodes closest to the destination (by straight-line distance), often finding a path quickly but not necessarily the shortest.',
                                       'bellman-ford': 'Bellman-Ford finds the shortest path and can handle negative weights, but is slower than Dijkstra.',
     };
     Alert.alert(algorithm.name, descriptions[algorithm.id] || 'No description available.');
@@ -263,6 +268,7 @@ const PathfindingComparison: React.FC = () => {
     selectionMode={selectionMode}
     onTapMap={onTapMap}
     onGraphUpdate={onGraphUpdate}
+    showVisitedNodes={showVisitedNodes}
     />
     <ControlPanel
     key={comparisonResults ? JSON.stringify(comparisonResults) : 'no-results'}
@@ -273,6 +279,8 @@ const PathfindingComparison: React.FC = () => {
     isComputing={isComputing}
     comparisonResults={comparisonResults}
     travelTime={pathResult?.travelTime}
+    showVisitedNodes={showVisitedNodes}
+    onShowVisitedNodesChange={setShowVisitedNodes}
     onAlgorithmSelect={onAlgorithmSelect}
     onAlgorithmInfo={onAlgorithmInfo}
     onSelectStartPoint={onSelectStartPoint}
