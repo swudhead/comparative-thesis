@@ -16,7 +16,11 @@ type ControlPanelProps = {
   startPoint: { lat: number; lng: number } | null;
   endPoint: { lat: number; lng: number } | null;
   isComputing: boolean;
-  comparisonResults: Record<string, { time: string; distance: string; nodes: number }> | null;
+  comparisonResults: Record<
+  string,
+  { time: string; distance: string; nodes: number; edgesExplored: number; pathNodeCount: number }
+  > | null;
+  travelTime?: string; // New prop for travel time
   onAlgorithmSelect: (algorithm: algorithm) => void;
   onAlgorithmInfo: (algorithm: algorithm) => void;
   onSelectStartPoint: () => void;
@@ -34,6 +38,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   endPoint,
   isComputing,
   comparisonResults,
+  travelTime,
   onAlgorithmSelect,
   onAlgorithmInfo,
   onSelectStartPoint,
@@ -46,19 +51,22 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const [expanded, setExpanded] = useState(false);
   const panelHeight = React.useRef(new Animated.Value(240)).current;
 
-  // Import algorithms from utils
   const { algorithms } = require('../utils/algorithms');
 
-  // Auto-expand panel when comparisonResults are available
+  useEffect(() => {
+    console.log('ControlPanel received props:');
+    console.log('- selectedAlgorithm:', selectedAlgorithm);
+    console.log('- comparisonResults:', comparisonResults);
+  }, [selectedAlgorithm, comparisonResults]);
+
   useEffect(() => {
     if (comparisonResults && !expanded) {
       toggleExpansion();
     }
   }, [comparisonResults, expanded]);
 
-  // Toggle control panel expansion
   const toggleExpansion = () => {
-    const targetHeight = expanded ? 240 : 420;
+    const targetHeight = expanded ? 240 : 480; // Increased height to accommodate more metrics
 
     Animated.spring(panelHeight, {
       toValue: targetHeight,
@@ -79,7 +87,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     </TouchableOpacity>
     </View>
 
-    {/* Algorithm selection */}
     <View style={styles.algorithmScrollContainer}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.algorithmScroll}>
     {algorithms.map((algorithm: algorithm) => (
@@ -106,7 +113,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     </ScrollView>
     </View>
 
-    {/* Action buttons */}
     <View style={styles.actionContainer}>
     <View style={styles.pointButtonsRow}>
     <TouchableOpacity
@@ -196,7 +202,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   </View>
   </View>
 
-  {/* Results Section */}
   {expanded && (
     <ScrollView style={styles.resultsScrollView} contentContainerStyle={styles.resultsScrollContent}>
     {comparisonResults && selectedAlgorithm ? (
@@ -205,9 +210,15 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       {comparisonResults[selectedAlgorithm.id] ? (
         <View style={styles.resultsBox}>
         <View style={styles.resultItem}>
-        <Text style={styles.resultLabel}>Time</Text>
+        <Text style={styles.resultLabel}>Exec. Time</Text>
         <Text style={styles.resultValue}>
         {comparisonResults[selectedAlgorithm.id]?.time || '---'}
+        </Text>
+        </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Travel Time</Text>
+        <Text style={styles.resultValue}>
+        {travelTime || '---'}
         </Text>
         </View>
         <View style={styles.resultItem}>
@@ -222,6 +233,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         {comparisonResults[selectedAlgorithm.id]?.nodes || '---'}
         </Text>
         </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Edges Explored</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.edgesExplored || '---'}
+        </Text>
+        </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Path Nodes</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.pathNodeCount || '---'}
+        </Text>
+        </View>
         </View>
       ) : (
         <Text style={styles.resultValue}>No results available for {selectedAlgorithm.name}</Text>
@@ -232,10 +255,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         "Dijkstra's algorithm guarantees the shortest path but explores more nodes than A*."}
         {selectedAlgorithm?.id === 'a-star' &&
           "A* uses heuristics to find paths more efficiently than Dijkstra, resulting in faster computation."}
-          {selectedAlgorithm?.id === 'd-star' &&
-            "D* is designed for partially known environments, useful when the map may change."}
-            {selectedAlgorithm?.id === 'd-star-lite' &&
-              "D* Lite improves on D* with better performance in dynamic environments."}
+          {selectedAlgorithm?.id === 'bfs' &&
+            "Breadth-First Search explores nodes level by level, finding the path with the fewest edges (ignoring weights)."}
+            {selectedAlgorithm?.id === 'bellman-ford' &&
+              "Bellman-Ford finds the shortest path and can handle negative weights, but is slower than Dijkstra."}
               </Text>
               </View>
               </View>
@@ -420,6 +443,7 @@ const styles = StyleSheet.create({
   },
   resultsBox: {
     flexDirection: 'row',
+    flexWrap: 'wrap', // Allow wrapping for more metrics
     justifyContent: 'space-between',
     backgroundColor: '#f5f5f5',
     padding: 12,
@@ -427,17 +451,21 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   resultItem: {
-    flex: 1,
+    width: '33%', // Adjust width to fit 3 items per row
     alignItems: 'center',
+    marginBottom: 8,
   },
   resultLabel: {
     fontSize: 12,
     color: '#757575',
     marginBottom: 4,
+    textAlign: 'center',
   },
   resultValue: {
     fontWeight: 'bold',
     color: '#1976D2',
+    fontSize: 14,
+    textAlign: 'center',
   },
   descriptionBox: {
     backgroundColor: '#E3F2FD',

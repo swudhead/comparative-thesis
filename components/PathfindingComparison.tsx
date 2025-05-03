@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, Alert } from 'react-native';
 import MapView from './MapView';
 import ControlPanel from './ControlPanel';
-import { dijkstraPathfinding, algorithm, getPerformanceMetrics } from '../utils/algorithms';
+import { dijkstraPathfinding, bfsPathfinding, bellmanFordPathfinding, algorithm } from '../utils/algorithms';
 
 interface Node {
   osmid: string;
@@ -25,9 +25,20 @@ interface PathResult {
   coordinates: number[][];
   algorithm: string;
   time: string;
+  travelTime?: string;
   distance: string;
   nodes: number;
   visitedNodes: number[][];
+  edgesExplored?: number;
+  pathNodeCount?: number;
+}
+
+interface ComparisonResult {
+  time: string;
+  distance: string;
+  nodes: number;
+  edgesExplored: number;
+  pathNodeCount: number;
 }
 
 const PathfindingComparison: React.FC = () => {
@@ -42,7 +53,7 @@ const PathfindingComparison: React.FC = () => {
   const [selectionMode, setSelectionMode] = useState<'start' | 'end' | 'none'>('none');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
-  const [comparisonResults, setComparisonResults] = useState<Record<string, { time: string; distance: string; nodes: number }> | null>(null);
+  const [comparisonResults, setComparisonResults] = useState<Record<string, ComparisonResult> | null>(null);
 
   const lastPathfindingInputs = useRef<string | null>(null);
 
@@ -134,116 +145,82 @@ const PathfindingComparison: React.FC = () => {
     setErrorMsg(null);
 
     try {
-      let pathResult: PathResult;
+      // Compute pathfinding for all algorithms
+      const algorithmsToRun = [
+        { id: 'dijkstra', func: () => dijkstraPathfinding(graph, startPoint, endPoint, 'dijkstra') },
+                                      { id: 'a-star', func: () => dijkstraPathfinding(graph, startPoint, endPoint, 'a-star') },
+                                      { id: 'bfs', func: () => bfsPathfinding(graph, startPoint, endPoint) },
+                                      { id: 'bellman-ford', func: () => bellmanFordPathfinding(graph, startPoint, endPoint) },
+      ];
 
-      const useSelectedEdges = startEdge || endEdge;
-      if (useSelectedEdges) {
-        let coordinates: number[][] = [];
-        let totalDistance = 0;
+      const results: Record<string, { result: any; travelTime: string }> = {};
 
-        if (startEdge && endEdge) {
-          const startEdgeEnd = startEdge[1];
-          const endEdgeStart = endEdge[0];
-          if (startEdgeEnd[0] === endEdgeStart[0] && startEdgeEnd[1] === endEdgeStart[1]) {
-            coordinates = [...startEdge, endEdge[1]];
-          } else {
-            const bridgeResult = await dijkstraPathfinding(
-              graph,
-              { lat: startEdgeEnd[1], lng: startEdgeEnd[0] },
-              { lat: endEdgeStart[1], lng: endEdgeStart[0] },
-              selectedAlgorithm.id
-            );
-            coordinates = [...startEdge, ...bridgeResult.path.slice(1), endEdge[1]];
-            totalDistance = bridgeResult.distance * 1000;
-          }
-        } else if (startEdge) {
-          const bridgeResult = await dijkstraPathfinding(
-            graph,
-            { lat: startEdge[1][1], lng: startEdge[1][0] },
-            { lat: endPoint.lat, lng: endPoint.lng },
-            selectedAlgorithm.id
-          );
-          coordinates = [...startEdge, ...bridgeResult.path.slice(1)];
-          totalDistance = bridgeResult.distance * 1000;
-        } else if (endEdge) {
-          const bridgeResult = await dijkstraPathfinding(
-            graph,
-            { lat: startPoint.lat, lng: startPoint.lng },
-            { lat: endEdge[0][1], lng: endEdge[0][0] },
-            selectedAlgorithm.id
-          );
-          coordinates = [...bridgeResult.path, endEdge[1]];
-          totalDistance = bridgeResult.distance * 1000;
-        }
+      for (const algo of algorithmsToRun) {
+        const result = await algo.func();
+        const totalDistance = result.distance * 1000; // Convert km to meters
+        const speed = 5.56; // meters per second
+        const travelTime = totalDistance / speed; // Estimated travel time in seconds
 
-        if (totalDistance === 0) {
-          for (let i = 0; i < coordinates.length - 1; i++) {
-            const dx = (coordinates[i + 1][0] - coordinates[i][0]) * 111000;
-            const dy = (coordinates[i + 1][1] - coordinates[i][1]) * 111000;
-            totalDistance += Math.sqrt(dx * dx + dy * dy);
-          }
-        }
-
-        const speed = 5.56;
-        const time = totalDistance / speed;
-
-        pathResult = {
-          coordinates,
-          algorithm: `${selectedAlgorithm.id}-with-edges`,
-          time: `${time.toFixed(2)}s`,
-                                      distance: `${(totalDistance / 1000).toFixed(1)}km`,
-                                      nodes: coordinates.length,
-                                      visitedNodes: [],
+        results[algo.id] = {
+          result,
+          travelTime: `${travelTime.toFixed(2)}s`,
         };
-      } else {
-        if (selectedAlgorithm.id === 'dijkstra' || selectedAlgorithm.id === 'a-star') {
-          const result = await dijkstraPathfinding(graph, startPoint, endPoint, selectedAlgorithm.id);
-          pathResult = {
-            coordinates: result.path,
-            algorithm: selectedAlgorithm.id,
-            time: `${(result.time / 1000).toFixed(2)}s`,
-                                      distance: `${result.distance.toFixed(1)}km`,
-                                      nodes: result.nodesVisited,
-                                      visitedNodes: result.visitedNodes || [],
-          };
-        } else {
-          const distance = Math.sqrt(
-            Math.pow(endPoint.lng - startPoint.lng, 2) +
-            Math.pow(endPoint.lat - startPoint.lat, 2)
-          ) * 111000;
-          const mockPath = Array(10)
-          .fill(0)
-          .map((_, i) => {
-            const t = i / 9;
-            return [
-              startPoint.lng + t * (endPoint.lng - startPoint.lng),
-               startPoint.lat + t * (endPoint.lat - startPoint.lat),
-            ];
-          });
-          pathResult = {
-            coordinates: mockPath,
-            algorithm: selectedAlgorithm.id,
-            time: `${(distance / 100000 + Math.random() * 0.5).toFixed(2)}s`,
-                                      distance: `${(distance / 1000).toFixed(1)}km`,
-                                      nodes: Math.floor(50 + Math.random() * 50),
-                                      visitedNodes: [],
-          };
-        }
       }
 
-      setPathResult(pathResult);
-      setComparisonResults({
-        dijkstra: {
-          time: pathResult.algorithm === 'dijkstra' ? pathResult.time : getPerformanceMetrics('dijkstra', parseFloat(pathResult.distance)).time,
-                           distance: pathResult.distance,
-                           nodes: pathResult.algorithm === 'dijkstra' ? pathResult.nodes : getPerformanceMetrics('dijkstra', parseFloat(pathResult.distance)).nodes,
-        },
-        'a-star': getPerformanceMetrics('a-star', parseFloat(pathResult.distance)),
-                           'd-star': getPerformanceMetrics('d-star', parseFloat(pathResult.distance)),
-                           'd-star-lite': getPerformanceMetrics('d-star-lite', parseFloat(pathResult.distance)),
-      });
+      // Set pathResult for the selected algorithm
+      const selectedResult = results[selectedAlgorithm.id].result;
+      const selectedTravelTime = results[selectedAlgorithm.id].travelTime;
 
+      const pathResult: PathResult = {
+        coordinates: selectedResult.path,
+        algorithm: selectedAlgorithm.id,
+        time: `${(selectedResult.time / 1000).toFixed(2)}s`,
+                                      travelTime: selectedTravelTime,
+                                      distance: `${selectedResult.distance.toFixed(1)}km`,
+                                      nodes: selectedResult.nodesVisited,
+                                      visitedNodes: selectedResult.visitedNodes,
+                                      edgesExplored: selectedResult.edgesExplored,
+                                      pathNodeCount: selectedResult.pathNodeCount,
+      };
+
+      // Build comparisonResults with actual metrics for all algorithms
+      const newComparisonResults: Record<string, ComparisonResult> = {
+        dijkstra: {
+          time: `${(results['dijkstra'].result.time / 1000).toFixed(2)}s`,
+                                      distance: `${results['dijkstra'].result.distance.toFixed(1)}km`,
+                                      nodes: results['dijkstra'].result.nodesVisited,
+                                      edgesExplored: results['dijkstra'].result.edgesExplored,
+                                      pathNodeCount: results['dijkstra'].result.pathNodeCount,
+        },
+        'a-star': {
+          time: `${(results['a-star'].result.time / 1000).toFixed(2)}s`,
+                                      distance: `${results['a-star'].result.distance.toFixed(1)}km`,
+                                      nodes: results['a-star'].result.nodesVisited,
+                                      edgesExplored: results['a-star'].result.edgesExplored,
+                                      pathNodeCount: results['a-star'].result.pathNodeCount,
+        },
+        bfs: {
+          time: `${(results['bfs'].result.time / 1000).toFixed(2)}s`,
+                                      distance: `${results['bfs'].result.distance.toFixed(1)}km`,
+                                      nodes: results['bfs'].result.nodesVisited,
+                                      edgesExplored: results['bfs'].result.edgesExplored,
+                                      pathNodeCount: results['bfs'].result.pathNodeCount,
+        },
+        'bellman-ford': {
+          time: `${(results['bellman-ford'].result.time / 1000).toFixed(2)}s`,
+                                      distance: `${results['bellman-ford'].result.distance.toFixed(1)}km`,
+                                      nodes: results['bellman-ford'].result.nodesVisited,
+                                      edgesExplored: results['bellman-ford'].result.edgesExplored,
+                                      pathNodeCount: results['bellman-ford'].result.pathNodeCount,
+        },
+      };
+
+      setPathResult(pathResult);
+      setComparisonResults(newComparisonResults);
       setIsComputing(false);
+
+      console.log('Final pathResult set:', pathResult);
+      console.log('Final comparisonResults set:', newComparisonResults);
     } catch (error: any) {
       setErrorMsg(`Error computing path: ${error.message || 'Unknown error'}`);
       setIsComputing(false);
@@ -260,10 +237,10 @@ const PathfindingComparison: React.FC = () => {
 
   const onAlgorithmInfo = useCallback((algorithm: algorithm) => {
     const descriptions: { [key: string]: string } = {
-      dijkstra: "Dijkstra's algorithm guarantees the shortest path in a weighted graph but explores all possible nodes.",
+      dijkstra: "Dijkstra's algorithm guarantees the shortest path in a weighted graph but explores more nodes than A*.",
       'a-star': 'A* uses heuristics to optimize pathfinding, making it faster than Dijkstra in many cases.',
-      'd-star': 'D* is designed for dynamic environments where the map may change during pathfinding.',
-      'd-star-lite': 'D* Lite is an optimized version of D*, efficient for dynamic path updates.',
+      bfs: 'Breadth-First Search explores nodes level by level, finding the path with the fewest edges (ignoring weights).',
+                                      'bellman-ford': 'Bellman-Ford finds the shortest path and can handle negative weights, but is slower than Dijkstra.',
     };
     Alert.alert(algorithm.name, descriptions[algorithm.id] || 'No description available.');
   }, []);
@@ -288,12 +265,14 @@ const PathfindingComparison: React.FC = () => {
     onGraphUpdate={onGraphUpdate}
     />
     <ControlPanel
+    key={comparisonResults ? JSON.stringify(comparisonResults) : 'no-results'}
     mapLoaded={mapLoaded}
     selectedAlgorithm={selectedAlgorithm}
     startPoint={startPoint}
     endPoint={endPoint}
     isComputing={isComputing}
     comparisonResults={comparisonResults}
+    travelTime={pathResult?.travelTime}
     onAlgorithmSelect={onAlgorithmSelect}
     onAlgorithmInfo={onAlgorithmInfo}
     onSelectStartPoint={onSelectStartPoint}

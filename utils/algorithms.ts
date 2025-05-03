@@ -66,12 +66,12 @@ class PriorityQueue {
   }
 }
 
-export async function dijkstraPathfinding(
+// BFS Implementation (unweighted, ignores edge weights during search)
+export async function bfsPathfinding(
   graph: Graph,
   start: { lat: number; lng: number },
-  end: { lat: number; lng: number },
-  algorithm: string = 'dijkstra'
-): Promise<{ path: number[][]; distance: number; time: number; nodesVisited: number; visitedNodes: number[][] }> {
+  end: { lat: number; lng: number }
+): Promise<{ path: number[][]; distance: number; time: number; nodesVisited: number; visitedNodes: number[][]; edgesExplored: number; pathNodeCount: number }> {
   const startTime = performance.now();
 
   if (!graph || !graph.nodes || !graph.edges) {
@@ -84,59 +84,177 @@ export async function dijkstraPathfinding(
     throw new Error('Start or end node not found in the graph.');
   }
 
-  console.log(`Nearest start node: ${startNode.osmid}, Nearest end node: ${endNode.osmid}`);
+  console.log(`Starting pathfinding with BFS algorithm`);
+  console.log(`Start node: ${startNode.osmid} (${startNode.lat}, ${startNode.lng})`);
+  console.log(`End node: ${endNode.osmid} (${endNode.lat}, ${endNode.lng})`);
+  console.log(`Graph size: ${graph.nodes.size} nodes, ${graph.edges.size} edge sets`);
 
-  const distances = new Map<string, number>(); // Actual cost from start
-  const fScores = new Map<string, number>(); // Estimated total cost (g + h for A*)
+  const initialMemory = (typeof performance !== 'undefined' && 'memory' in performance)
+  ? performance.memory.usedJSHeapSize
+  : null;
+
+  const queue: string[] = [startNode.osmid];
+  const visited = new Set<string>([startNode.osmid]);
+  const visitedNodes: number[][] = [[startNode.lng, startNode.lat]];
   const previous = new Map<string, string | null>();
-  const visited = new Set<string>();
-  const visitedNodes: number[][] = [];
-  const pq = new PriorityQueue();
+  let edgesExplored = 0;
 
-  // Haversine heuristic for A*
-  const heuristic = (node: Node, endNode: Node): number => {
-    return haversineDistance(node, endNode); // Meters
-  };
-
-  // Initialize
   for (const node of graph.nodes.keys()) {
-    distances.set(node, Infinity);
-    fScores.set(node, Infinity);
     previous.set(node, null);
   }
-  distances.set(startNode.osmid, 0);
-  fScores.set(startNode.osmid, algorithm === 'a-star' ? heuristic(startNode, endNode) : 0);
-  pq.enqueue(startNode.osmid, fScores.get(startNode.osmid)!);
 
-  // Main loop (Dijkstra's or A* based on algorithm parameter)
-  while (!pq.isEmpty()) {
-    const current = pq.dequeue();
-    if (!current) break;
-
-    if (visited.has(current)) continue;
-    visited.add(current);
-
-    const node = graph.nodes.get(current)!;
-    visitedNodes.push([node.lng, node.lat]);
-
+  // BFS main loop
+  while (queue.length > 0) {
+    const current = queue.shift()!;
     if (current === endNode.osmid) break;
 
+    const node = graph.nodes.get(current)!;
     const edges = graph.edges.get(current) || [];
+    edgesExplored += edges.length;
+
     for (const edge of edges) {
       const neighbor = edge.target;
-      const newDist = distances.get(current)! + edge.weight;
-
-      if (newDist < distances.get(neighbor)!) {
-        distances.set(neighbor, newDist);
+      if (!visited.has(neighbor)) {
+        visited.add(neighbor);
+        queue.push(neighbor);
         previous.set(neighbor, current);
-        const h = algorithm === 'a-star' ? heuristic(graph.nodes.get(neighbor)!, endNode) : 0;
-        fScores.set(neighbor, newDist + h);
-        pq.enqueue(neighbor, fScores.get(neighbor)!);
+        const neighborNode = graph.nodes.get(neighbor)!;
+        visitedNodes.push([neighborNode.lng, neighborNode.lat]);
       }
     }
   }
 
   if (!visited.has(endNode.osmid)) {
+    throw new Error('No path found between start and end nodes.');
+  }
+
+  // Reconstruct path and calculate actual distance using edge weights
+  const path: number[][] = [];
+  let totalDistance = 0;
+  let current: string | null = endNode.osmid;
+
+  while (current) {
+    const node = graph.nodes.get(current)!;
+    path.unshift([node.lng, node.lat]);
+    const prev = previous.get(current);
+    if (prev) {
+      const edges = graph.edges.get(prev) || [];
+      const edge = edges.find(e => e.target === current);
+      if (edge) totalDistance += edge.weight;
+    }
+    current = prev;
+  }
+
+  const endTime = performance.now();
+  const executionTime = endTime - startTime;
+
+  const finalMemory = (typeof performance !== 'undefined' && 'memory' in performance)
+  ? performance.memory.usedJSHeapSize
+  : null;
+  const memoryUsed = (initialMemory !== null && finalMemory !== null)
+  ? (finalMemory - initialMemory) / 1024 / 1024
+  : null;
+
+  console.log(`Pathfinding Performance Metrics (BFS):`);
+  console.log(`- Execution Time: ${executionTime.toFixed(2)}ms (${(executionTime / 1000).toFixed(2)}s)`);
+  console.log(`- Nodes Visited: ${visited.size}`);
+  console.log(`- Edges Explored: ${edgesExplored}`);
+  console.log(`- Path Length: ${totalDistance.toFixed(2)}m (${(totalDistance / 1000).toFixed(2)}km)`);
+  console.log(`- Path Node Count: ${path.length}`);
+  if (memoryUsed !== null) {
+    console.log(`- Memory Used: ${memoryUsed.toFixed(2)} MB`);
+  } else {
+    console.log(`- Memory Used: Not available (performance.memory not supported)`);
+  }
+  console.log(`Visited Nodes (first 10):`, visitedNodes.slice(0, 10));
+
+  return {
+    path,
+    distance: totalDistance / 1000,
+    time: executionTime,
+    nodesVisited: visited.size,
+    visitedNodes,
+    edgesExplored,
+    pathNodeCount: path.length,
+  };
+}
+
+// Bellman-Ford Implementation
+export async function bellmanFordPathfinding(
+  graph: Graph,
+  start: { lat: number; lng: number },
+  end: { lat: number; lng: number }
+): Promise<{ path: number[][]; distance: number; time: number; nodesVisited: number; visitedNodes: number[][]; edgesExplored: number; pathNodeCount: number }> {
+  const startTime = performance.now();
+
+  if (!graph || !graph.nodes || !graph.edges) {
+    throw new Error('Invalid graph: nodes or edges are missing');
+  }
+
+  const startNode = findNearestNode(graph.nodes, start);
+  const endNode = findNearestNode(graph.nodes, end);
+  if (!startNode || !endNode) {
+    throw new Error('Start or end node not found in the graph.');
+  }
+
+  console.log(`Starting pathfinding with Bellman-Ford algorithm`);
+  console.log(`Start node: ${startNode.osmid} (${startNode.lat}, ${startNode.lng})`);
+  console.log(`End node: ${endNode.osmid} (${endNode.lat}, ${endNode.lng})`);
+  console.log(`Graph size: ${graph.nodes.size} nodes, ${graph.edges.size} edge sets`);
+
+  const initialMemory = (typeof performance !== 'undefined' && 'memory' in performance)
+  ? performance.memory.usedJSHeapSize
+  : null;
+
+  const distances = new Map<string, number>();
+  const previous = new Map<string, string | null>();
+  const visitedNodes: number[][] = [];
+  const visited = new Set<string>();
+  let edgesExplored = 0;
+
+  // Initialize
+  for (const node of graph.nodes.keys()) {
+    distances.set(node, Infinity);
+    previous.set(node, null);
+  }
+  distances.set(startNode.osmid, 0);
+  visited.add(startNode.osmid);
+  visitedNodes.push([startNode.lng, startNode.lat]);
+
+  // Relax edges |V|-1 times
+  const V = graph.nodes.size;
+  for (let i = 0; i < V - 1; i++) {
+    let changesMade = false;
+    for (const [source, edgeList] of graph.edges.entries()) {
+      for (const edge of edgeList) {
+        const newDist = distances.get(source)! + edge.weight;
+        if (newDist < distances.get(edge.target)!) {
+          distances.set(edge.target, newDist);
+          previous.set(edge.target, source);
+          if (!visited.has(edge.target)) {
+            visited.add(edge.target);
+            const targetNode = graph.nodes.get(edge.target)!;
+            visitedNodes.push([targetNode.lng, targetNode.lat]);
+          }
+          changesMade = true;
+        }
+        edgesExplored++;
+      }
+    }
+    if (!changesMade) break; // Optimization: stop if no changes
+  }
+
+  // Check for negative cycles
+  for (const [source, edgeList] of graph.edges.entries()) {
+    for (const edge of edgeList) {
+      if (distances.get(source)! + edge.weight < distances.get(edge.target)!) {
+        throw new Error('Graph contains a negative cycle');
+      }
+      edgesExplored++;
+    }
+  }
+
+  if (distances.get(endNode.osmid)! === Infinity) {
     throw new Error('No path found between start and end nodes.');
   }
 
@@ -158,12 +276,167 @@ export async function dijkstraPathfinding(
   }
 
   const endTime = performance.now();
+  const executionTime = endTime - startTime;
+
+  const finalMemory = (typeof performance !== 'undefined' && 'memory' in performance)
+  ? performance.memory.usedJSHeapSize
+  : null;
+  const memoryUsed = (initialMemory !== null && finalMemory !== null)
+  ? (finalMemory - initialMemory) / 1024 / 1024
+  : null;
+
+  console.log(`Pathfinding Performance Metrics (Bellman-Ford):`);
+  console.log(`- Execution Time: ${executionTime.toFixed(2)}ms (${(executionTime / 1000).toFixed(2)}s)`);
+  console.log(`- Nodes Visited: ${visited.size}`);
+  console.log(`- Edges Explored: ${edgesExplored}`);
+  console.log(`- Path Length: ${totalDistance.toFixed(2)}m (${(totalDistance / 1000).toFixed(2)}km)`);
+  console.log(`- Path Node Count: ${path.length}`);
+  if (memoryUsed !== null) {
+    console.log(`- Memory Used: ${memoryUsed.toFixed(2)} MB`);
+  } else {
+    console.log(`- Memory Used: Not available (performance.memory not supported)`);
+  }
+  console.log(`Visited Nodes (first 10):`, visitedNodes.slice(0, 10));
+
   return {
     path,
-    distance: totalDistance / 1000, // Convert meters to kilometers
-    time: endTime - startTime,
+    distance: totalDistance / 1000,
+    time: executionTime,
     nodesVisited: visited.size,
     visitedNodes,
+    edgesExplored,
+    pathNodeCount: path.length,
+  };
+}
+
+// Dijkstra's and A* Implementation
+export async function dijkstraPathfinding(
+  graph: Graph,
+  start: { lat: number; lng: number },
+  end: { lat: number; lng: number },
+  algorithm: string = 'dijkstra'
+): Promise<{ path: number[][]; distance: number; time: number; nodesVisited: number; visitedNodes: number[][]; edgesExplored: number; pathNodeCount: number }> {
+  const startTime = performance.now();
+
+  if (!graph || !graph.nodes || !graph.edges) {
+    throw new Error('Invalid graph: nodes or edges are missing');
+  }
+
+  const startNode = findNearestNode(graph.nodes, start);
+  const endNode = findNearestNode(graph.nodes, end);
+  if (!startNode || !endNode) {
+    throw new Error('Start or end node not found in the graph.');
+  }
+
+  console.log(`Starting pathfinding with ${algorithm} algorithm`);
+  console.log(`Start node: ${startNode.osmid} (${startNode.lat}, ${startNode.lng})`);
+  console.log(`End node: ${endNode.osmid} (${endNode.lat}, ${endNode.lng})`);
+  console.log(`Graph size: ${graph.nodes.size} nodes, ${graph.edges.size} edge sets`);
+
+  const initialMemory = (typeof performance !== 'undefined' && 'memory' in performance)
+  ? performance.memory.usedJSHeapSize
+  : null;
+
+  const distances = new Map<string, number>();
+  const fScores = new Map<string, number>();
+  const previous = new Map<string, string | null>();
+  const visited = new Set<string>();
+  const visitedNodes: number[][] = [];
+  const pq = new PriorityQueue();
+  let edgesExplored = 0;
+
+  const heuristic = (node: Node, endNode: Node): number => {
+    return haversineDistance(node, endNode);
+  };
+
+  for (const node of graph.nodes.keys()) {
+    distances.set(node, Infinity);
+    fScores.set(node, Infinity);
+    previous.set(node, null);
+  }
+  distances.set(startNode.osmid, 0);
+  fScores.set(startNode.osmid, algorithm === 'a-star' ? heuristic(startNode, endNode) : 0);
+  pq.enqueue(startNode.osmid, fScores.get(startNode.osmid)!);
+
+  while (!pq.isEmpty()) {
+    const current = pq.dequeue();
+    if (!current) break;
+
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const node = graph.nodes.get(current)!;
+    visitedNodes.push([node.lng, node.lat]);
+
+    if (current === endNode.osmid) break;
+
+    const edges = graph.edges.get(current) || [];
+    edgesExplored += edges.length;
+    for (const edge of edges) {
+      const neighbor = edge.target;
+      const newDist = distances.get(current)! + edge.weight;
+
+      if (newDist < distances.get(neighbor)!) {
+        distances.set(neighbor, newDist);
+        previous.set(neighbor, current);
+        const h = algorithm === 'a-star' ? heuristic(graph.nodes.get(neighbor)!, endNode) : 0;
+        fScores.set(neighbor, newDist + h);
+        pq.enqueue(neighbor, fScores.get(neighbor)!);
+      }
+    }
+  }
+
+  if (!visited.has(endNode.osmid)) {
+    throw new Error('No path found between start and end nodes.');
+  }
+
+  const path: number[][] = [];
+  let totalDistance = 0;
+  let current: string | null = endNode.osmid;
+
+  while (current) {
+    const node = graph.nodes.get(current)!;
+    path.unshift([node.lng, node.lat]);
+    const prev = previous.get(current);
+    if (prev) {
+      const edges = graph.edges.get(prev) || [];
+      const edge = edges.find(e => e.target === current);
+      if (edge) totalDistance += edge.weight;
+    }
+    current = prev;
+  }
+
+  const endTime = performance.now();
+  const executionTime = endTime - startTime;
+
+  const finalMemory = (typeof performance !== 'undefined' && 'memory' in performance)
+  ? performance.memory.usedJSHeapSize
+  : null;
+  const memoryUsed = (initialMemory !== null && finalMemory !== null)
+  ? (finalMemory - initialMemory) / 1024 / 1024
+  : null;
+
+  console.log(`Pathfinding Performance Metrics (${algorithm}):`);
+  console.log(`- Execution Time: ${executionTime.toFixed(2)}ms (${(executionTime / 1000).toFixed(2)}s)`);
+  console.log(`- Nodes Visited: ${visited.size}`);
+  console.log(`- Edges Explored: ${edgesExplored}`);
+  console.log(`- Path Length: ${totalDistance.toFixed(2)}m (${(totalDistance / 1000).toFixed(2)}km)`);
+  console.log(`- Path Node Count: ${path.length}`);
+  if (memoryUsed !== null) {
+    console.log(`- Memory Used: ${memoryUsed.toFixed(2)} MB`);
+  } else {
+    console.log(`- Memory Used: Not available (performance.memory not supported)`);
+  }
+  console.log(`Visited Nodes (first 10):`, visitedNodes.slice(0, 10));
+
+  return {
+    path,
+    distance: totalDistance / 1000,
+    time: executionTime,
+    nodesVisited: visited.size,
+    visitedNodes,
+    edgesExplored,
+    pathNodeCount: path.length,
   };
 }
 
@@ -175,32 +448,6 @@ export interface algorithm {
 export const algorithms: algorithm[] = [
   { id: 'dijkstra', name: 'Dijkstra' },
 { id: 'a-star', name: 'A*' },
-{ id: 'd-star', name: 'D*' },
-{ id: 'd-star-lite', name: 'D* Lite' },
+{ id: 'bfs', name: 'Breadth-First Search' },
+{ id: 'bellman-ford', name: 'Bellman-Ford' },
 ];
-
-export const getPerformanceMetrics = (algorithm: string, distance: number) => {
-  const metrics = {
-    'a-star': {
-      time: `${(distance / 100 + 0.3).toFixed(2)}s`,
-      nodes: Math.floor(70 + distance * 10),
-      distance: `${distance.toFixed(1)}km`,
-    },
-    'd-star': {
-      time: `${(distance / 100 + 0.8).toFixed(2)}s`,
-      nodes: Math.floor(130 + distance * 15),
-      distance: `${distance.toFixed(1)}km`,
-    },
-    'd-star-lite': {
-      time: `${(distance / 100 + 0.5).toFixed(2)}s`,
-      nodes: Math.floor(110 + distance * 12),
-      distance: `${distance.toFixed(1)}km`,
-    },
-    'dijkstra': {
-      time: `${(distance / 100 + 0.4).toFixed(2)}s`,
-      nodes: Math.floor(90 + distance * 12),
-      distance: `${distance.toFixed(1)}km`,
-    },
-  };
-  return metrics[algorithm as keyof typeof metrics] || metrics['dijkstra'];
-};

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, Switch } from 'react-native';
 import MapboxGL from '@rnmapbox/maps';
 import { nodesGeoJSON } from '../utils/nodes';
 import { edgesGeoJSON } from '../utils/edges';
@@ -75,6 +75,7 @@ const MapView: React.FC<MapViewProps> = ({
   const [nodesFetched, setNodesFetched] = useState(false);
   const [edgesFetched, setEdgesFetched] = useState(false);
   const [visitedNodeIds, setVisitedNodeIds] = useState<string[]>([]);
+  const [showVisitedNodes, setShowVisitedNodes] = useState(true);
 
   const stableOnError = useCallback((error: string) => {
     onError(error);
@@ -210,30 +211,48 @@ const MapView: React.FC<MapViewProps> = ({
   }, [startPoint, endPoint]);
 
   useEffect(() => {
+    console.log('MapView received pathResult:', pathResult);
     if (pathResult?.visitedNodes && pathResult.visitedNodes.length > 0) {
       const visitedIds: string[] = [];
-      pathResult.visitedNodes.forEach(([lng, lat]) => {
+      const unmatchedNodes: number[][] = [];
+      pathResult.visitedNodes.forEach(([lng, lat], index) => {
+        let matched = false;
         for (const [osmid, node] of graph.nodes.entries()) {
           if (Math.abs(node.lng - lng) < 0.00001 && Math.abs(node.lat - lat) < 0.00001) {
             visitedIds.push(osmid);
+            matched = true;
             break;
           }
         }
+        if (!matched) {
+          unmatchedNodes.push([lng, lat]);
+        }
       });
       setVisitedNodeIds(visitedIds);
-      console.log(`Mapped ${visitedIds.length} visited nodes to osmids`);
+      console.log(`Visited Nodes Mapping:`);
+      console.log(`- Total visited nodes from pathResult: ${pathResult.visitedNodes.length}`);
+      console.log(`- Successfully mapped to osmids: ${visitedIds.length}`);
+      console.log(`- Unmatched nodes: ${unmatchedNodes.length}`);
+      if (unmatchedNodes.length > 0) {
+        console.log(`- First few unmatched nodes:`, unmatchedNodes.slice(0, 5));
+      }
+      console.log(`- First few visited osmids:`, visitedIds.slice(0, 5));
     } else {
       setVisitedNodeIds([]);
+      console.log(`Visited Nodes Mapping: No visited nodes to map.`);
+      if (pathResult) {
+        console.log('pathResult details:', pathResult);
+      }
     }
   }, [pathResult, graph.nodes]);
 
   const getPathColor = (algorithm: string) => {
     const color = {
-      dijkstra: '#FF9800',
-      'a-star': '#4CAF50',
-      'd-star': '#9C27B0',
-      'd-star-lite': '#2196F3',
-    }[algorithm] || '#2196F3';
+      dijkstra: '#FF9800', // Orange
+      'a-star': '#4CAF50', // Green
+      bfs: '#FF00FF', // Magenta
+      'bellman-ford': '#00FFFF', // Cyan
+    }[algorithm] || '#2196F3'; // Default blue
     return validateColor(color);
   };
 
@@ -306,7 +325,30 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [pathResult, stableOnError]);
 
+  const circleRadius = visitedNodeIds.length > 0
+  ? [
+    'match',
+    ['get', 'osmid'],
+    ...visitedNodeIds.flatMap((id) => [id, selectionMode === 'none' ? 5 : 10]),
+    selectionMode === 'none' ? 3 : 8,
+  ]
+  : selectionMode === 'none' ? 3 : 8;
+
+  const circleColor = showVisitedNodes && visitedNodeIds.length > 0
+  ? [
+    'match',
+    ['get', 'osmid'],
+    ...visitedNodeIds.flatMap((id) => [id, validateColor('#FFFF00')]),
+    validateColor(
+      selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
+    ),
+  ]
+  : validateColor(
+    selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
+  );
+
   return (
+    <View style={StyleSheet.absoluteFill}>
     <MapboxGL.MapView
     style={StyleSheet.absoluteFill}
     styleURL={MapboxGL.StyleURL.Street}
@@ -331,22 +373,11 @@ const MapView: React.FC<MapViewProps> = ({
     <MapboxGL.CircleLayer
     id="nodes-layer"
     style={{
-      circleRadius: selectionMode === 'none' ? 3 : 8,
+      circleRadius,
       circleStrokeWidth: selectionMode === 'none' ? 1 : 2,
       circleStrokeColor: '#fff',
       visibility: 'visible',
-      circleColor: visitedNodeIds.length > 0
-      ? [
-        'match',
-        ['get', 'osmid'],
-        ...visitedNodeIds.flatMap((id) => [id, validateColor('#FF0000')]),
-          validateColor(
-            selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
-          ),
-      ]
-      : validateColor(
-        selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
-      ),
+      circleColor,
     }}
     minZoomLevel={10}
     filter={['==', ['geometry-type'], 'Point']}
@@ -423,6 +454,19 @@ const MapView: React.FC<MapViewProps> = ({
       </View>
     )}
     </MapboxGL.MapView>
+
+    {pathResult?.visitedNodes && pathResult.visitedNodes.length > 0 && (
+      <View style={styles.toggleContainer}>
+      <Text style={styles.toggleText}>Show Visited Nodes</Text>
+      <Switch
+      value={showVisitedNodes}
+      onValueChange={(value) => setShowVisitedNodes(value)}
+      thumbColor={showVisitedNodes ? '#2196F3' : '#ccc'}
+      trackColor={{ false: '#767577', true: '#81b0ff' }}
+      />
+      </View>
+    )}
+    </View>
   );
 };
 
@@ -453,6 +497,22 @@ const styles = StyleSheet.create({
                                  borderRadius: 20,
   },
   selectionText: { color: 'white', fontWeight: 'bold' },
+  toggleContainer: {
+    position: 'absolute',
+    bottom: 20,
+    right: 10,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+                                 padding: 10,
+                                 borderRadius: 10,
+                                 flexDirection: 'row',
+                                 alignItems: 'center',
+  },
+  toggleText: {
+    marginRight: 10,
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#333',
+  },
 });
 
 export default MapView;
