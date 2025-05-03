@@ -1,3 +1,4 @@
+// algorithms.ts
 // Haversine distance (meters)
 export const haversineDistance = (point1: { lat: number; lng: number }, point2: { lat: number; lng: number }): number => {
   const R = 6371e3; // Earth's radius in meters
@@ -48,7 +49,7 @@ export function findNearestNode(nodes: Map<string, Node>, point: { lat: number; 
   return nearest;
 }
 
-// Simple Priority Queue for Dijkstra's and A*
+// Simple Priority Queue for Dijkstra's, A*, and GBFS
 class PriorityQueue {
   private items: { element: string; priority: number }[] = [];
 
@@ -66,8 +67,8 @@ class PriorityQueue {
   }
 }
 
-// BFS Implementation (unweighted, ignores edge weights during search)
-export async function bfsPathfinding(
+// GBFS Implementation (Greedy Best-First Search, uses only heuristic)
+export async function gbfsPathfinding(
   graph: Graph,
   start: { lat: number; lng: number },
   end: { lat: number; lng: number }
@@ -84,7 +85,7 @@ export async function bfsPathfinding(
     throw new Error('Start or end node not found in the graph.');
   }
 
-  console.log(`Starting pathfinding with BFS algorithm`);
+  console.log(`Starting pathfinding with GBFS algorithm`);
   console.log(`Start node: ${startNode.osmid} (${startNode.lat}, ${startNode.lng})`);
   console.log(`End node: ${endNode.osmid} (${endNode.lat}, ${endNode.lng})`);
   console.log(`Graph size: ${graph.nodes.size} nodes, ${graph.edges.size} edge sets`);
@@ -93,33 +94,43 @@ export async function bfsPathfinding(
   ? performance.memory.usedJSHeapSize
   : null;
 
-  const queue: string[] = [startNode.osmid];
-  const visited = new Set<string>([startNode.osmid]);
-  const visitedNodes: number[][] = [[startNode.lng, startNode.lat]];
+  const hScores = new Map<string, number>(); // Heuristic scores (estimated distance to end)
   const previous = new Map<string, string | null>();
+  const pq = new PriorityQueue();
+  const visited = new Set<string>();
+  const visitedNodes: number[][] = [];
   let edgesExplored = 0;
 
+  // Initialize
   for (const node of graph.nodes.keys()) {
+    hScores.set(node, Infinity);
     previous.set(node, null);
   }
+  hScores.set(startNode.osmid, haversineDistance(startNode, endNode));
+  pq.enqueue(startNode.osmid, hScores.get(startNode.osmid)!);
+  visitedNodes.push([startNode.lng, startNode.lat]);
 
-  // BFS main loop
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    if (current === endNode.osmid) break;
+  // GBFS main loop: Process nodes based on heuristic score
+  while (!pq.isEmpty()) {
+    const current = pq.dequeue();
+    if (!current) break;
+
+    if (visited.has(current)) continue;
+    visited.add(current);
 
     const node = graph.nodes.get(current)!;
+    visitedNodes.push([node.lng, node.lat]);
+
+    if (current === endNode.osmid) break;
+
     const edges = graph.edges.get(current) || [];
     edgesExplored += edges.length;
-
     for (const edge of edges) {
       const neighbor = edge.target;
       if (!visited.has(neighbor)) {
-        visited.add(neighbor);
-        queue.push(neighbor);
+        hScores.set(neighbor, haversineDistance(graph.nodes.get(neighbor)!, endNode));
         previous.set(neighbor, current);
-        const neighborNode = graph.nodes.get(neighbor)!;
-        visitedNodes.push([neighborNode.lng, neighborNode.lat]);
+        pq.enqueue(neighbor, hScores.get(neighbor)!);
       }
     }
   }
@@ -155,7 +166,7 @@ export async function bfsPathfinding(
   ? (finalMemory - initialMemory) / 1024 / 1024
   : null;
 
-  console.log(`Pathfinding Performance Metrics (BFS):`);
+  console.log(`Pathfinding Performance Metrics (GBFS):`);
   console.log(`- Execution Time: ${executionTime.toFixed(2)}ms (${(executionTime / 1000).toFixed(2)}s)`);
   console.log(`- Nodes Visited: ${visited.size}`);
   console.log(`- Edges Explored: ${edgesExplored}`);
@@ -448,6 +459,6 @@ export interface algorithm {
 export const algorithms: algorithm[] = [
   { id: 'dijkstra', name: 'Dijkstra' },
 { id: 'a-star', name: 'A*' },
-{ id: 'bfs', name: 'Breadth-First Search' },
+{ id: 'gbfs', name: 'Greedy Best-First Search' },
 { id: 'bellman-ford', name: 'Bellman-Ford' },
 ];

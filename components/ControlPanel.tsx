@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Animated,
+  Switch,
 } from 'react-native';
 import { algorithm } from '../utils/algorithms';
 
@@ -20,7 +21,9 @@ type ControlPanelProps = {
   string,
   { time: string; distance: string; nodes: number; edgesExplored: number; pathNodeCount: number }
   > | null;
-  travelTime?: string; // New prop for travel time
+  travelTime?: string;
+  showVisitedNodes: boolean; // New prop for toggle state
+  onShowVisitedNodesChange: (value: boolean) => void; // New prop for toggle handler
   onAlgorithmSelect: (algorithm: algorithm) => void;
   onAlgorithmInfo: (algorithm: algorithm) => void;
   onSelectStartPoint: () => void;
@@ -39,6 +42,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   isComputing,
   comparisonResults,
   travelTime,
+  showVisitedNodes,
+  onShowVisitedNodesChange,
   onAlgorithmSelect,
   onAlgorithmInfo,
   onSelectStartPoint,
@@ -57,7 +62,8 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     console.log('ControlPanel received props:');
     console.log('- selectedAlgorithm:', selectedAlgorithm);
     console.log('- comparisonResults:', comparisonResults);
-  }, [selectedAlgorithm, comparisonResults]);
+    console.log('- showVisitedNodes:', showVisitedNodes);
+  }, [selectedAlgorithm, comparisonResults, showVisitedNodes]);
 
   useEffect(() => {
     if (comparisonResults && !expanded) {
@@ -66,7 +72,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   }, [comparisonResults, expanded]);
 
   const toggleExpansion = () => {
-    const targetHeight = expanded ? 240 : 480; // Increased height to accommodate more metrics
+    const targetHeight = expanded ? 240 : 400; // Increased height to accommodate toggle
 
     Animated.spring(panelHeight, {
       toValue: targetHeight,
@@ -81,7 +87,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   return (
     <Animated.View style={[styles.controlPanel, { height: panelHeight }]}>
     <View style={styles.headerBar}>
-    <Text style={styles.headerText}>Algorithm Controls</Text>
+    <Text style={styles.headerText}>Comparative Analysis for Algorithms</Text>
     <TouchableOpacity onPress={toggleExpansion} style={styles.expandButton}>
     <Text style={styles.expandButtonText}>{expanded ? '▲' : '▼'}</Text>
     </TouchableOpacity>
@@ -208,6 +214,7 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       <View style={styles.resultsContainer}>
       <Text style={styles.resultsTitle}>Results for {selectedAlgorithm?.name}:</Text>
       {comparisonResults[selectedAlgorithm.id] ? (
+        <View>
         <View style={styles.resultsBox}>
         <View style={styles.resultItem}>
         <Text style={styles.resultLabel}>Exec. Time</Text>
@@ -244,6 +251,18 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         <Text style={styles.resultValue}>
         {comparisonResults[selectedAlgorithm.id]?.pathNodeCount || '---'}
         </Text>
+        </View>
+        </View>
+
+        {/* Toggle for Visited Nodes */}
+        <View style={styles.toggleContainer}>
+        <Text style={styles.toggleLabel}>Show Visited Nodes</Text>
+        <Switch
+        value={showVisitedNodes}
+        onValueChange={onShowVisitedNodesChange}
+        trackColor={{ false: '#767577', true: '#81b0ff' }}
+        thumbColor={showVisitedNodes ? '#2196F3' : '#f4f3f4'}
+        />
         </View>
         </View>
       ) : (
@@ -443,7 +462,7 @@ const styles = StyleSheet.create({
   },
   resultsBox: {
     flexDirection: 'row',
-    flexWrap: 'wrap', // Allow wrapping for more metrics
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     backgroundColor: '#f5f5f5',
     padding: 12,
@@ -451,7 +470,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   resultItem: {
-    width: '33%', // Adjust width to fit 3 items per row
+    width: '33%',
     alignItems: 'center',
     marginBottom: 8,
   },
@@ -466,6 +485,20 @@ const styles = StyleSheet.create({
     color: '#1976D2',
     fontSize: 14,
     textAlign: 'center',
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    color: '#333',
   },
   descriptionBox: {
     backgroundColor: '#E3F2FD',
