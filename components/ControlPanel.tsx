@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Animated,
+  Alert,
 } from 'react-native';
 import { algorithm } from '../utils/algorithms';
 
@@ -25,6 +26,8 @@ type ControlPanelProps = {
   onClearPoints: () => void;
   onSwapPoints: () => void;
   selectionMode: 'start' | 'end' | 'none';
+  isBlockingNode: boolean;
+  onToggleBlockingMode: () => void;
 };
 
 const ControlPanel: React.FC<ControlPanelProps> = ({
@@ -42,9 +45,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   onClearPoints,
   onSwapPoints,
   selectionMode,
+  isBlockingNode,
+  onToggleBlockingMode,
 }) => {
   const [expanded, setExpanded] = useState(false);
   const panelHeight = React.useRef(new Animated.Value(240)).current;
+  const [blockedNodes, setBlockedNodes] = useState<string[]>([]);
 
   // Import algorithms from utils
   const { algorithms } = require('../utils/algorithms');
@@ -68,6 +74,36 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     }).start();
 
     setExpanded(!expanded);
+  };
+
+  const handleBlockNodePress = () => {
+    if (selectedAlgorithm?.id === 'd-star-lite') {
+      onToggleBlockingMode();
+      Alert.alert(
+        'Block Nodes',
+        'Tap on nodes on the map to block them. Tap "Done" when finished.',
+        [
+          {
+            text: 'Done',
+            onPress: onToggleBlockingMode,
+            style: 'default',
+          },
+        ]
+      );
+    }
+  };
+
+  const handleNodeTap = (nodeId: string) => {
+    if (isBlockingNode) {
+      setBlockedNodes(prev => [...prev, nodeId]);
+      onToggleBlockingMode();
+      Alert.alert('Node Blocked', `Node ${nodeId} has been blocked.`);
+    }
+  };
+
+  const handleClearBlockedNodes = () => {
+    setBlockedNodes([]);
+    Alert.alert('Cleared', 'All blocked nodes have been cleared');
   };
 
   return (
@@ -125,6 +161,20 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
       ? 'Selecting...'
   : 'Set Start'}
   </Text>
+  </TouchableOpacity>
+
+  <View style={styles.buttonSpacer} />
+
+  <TouchableOpacity
+    style={[
+      styles.setPointButton,
+      styles.blockNodesButton,
+      styles.disabledButton, // Add disabled styling
+    ]}
+    onPress={() => {}} // Disable functionality
+    disabled={true} // Explicitly disable the button
+  >
+    <Text style={styles.disabledButtonText}>Block Nodes</Text>
   </TouchableOpacity>
 
   <View style={styles.buttonSpacer} />
@@ -350,6 +400,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFEBEE',
     borderWidth: 1,
     borderColor: '#F44336',
+  },
+  blockNodesButton: {
+    backgroundColor: '#FFF3E0',
+    borderWidth: 1,
+    borderColor: '#FF9800',
   },
   activeButton: {
     opacity: 1,

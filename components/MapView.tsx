@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { StyleSheet, View, Text } from 'react-native';
+import { StyleSheet, View, Text, ActivityIndicator, Alert } from 'react-native';
 import MapboxGL from '@rnmapbox/maps';
 import { nodesGeoJSON } from '../utils/nodes';
 import { edgesGeoJSON } from '../utils/edges';
@@ -21,6 +21,7 @@ interface Edge {
 interface Graph {
   nodes: Map<string, Node>;
   edges: Map<string, Edge[]>;
+  blockedNodes?: string[]; // Add blockedNodes as an optional property
 }
 
 type MapViewProps = {
@@ -37,15 +38,15 @@ type MapViewProps = {
   selectionMode: 'start' | 'end' | 'none';
   onTapMap: (event: any) => void;
   onGraphUpdate: (graph: Graph) => void;
+  onBlockEdge?: (source: string, target: string) => void;
+  graphLoading?: boolean;
+  onBlockNode?: (nodeId: string) => void;
+  isBlockingNode?: boolean;
 };
 
 const validateColor = (color: string): string => {
   const hexPattern = /^#([0-9A-F]{3}|[0-9A-F]{6})$/i;
-  if (hexPattern.test(color)) {
-    return color;
-  }
-  console.warn(`Invalid color value: ${color}. Using fallback color #000000.`);
-  return '#000000';
+  return hexPattern.test(color) ? color : '#000000';
 };
 
 const areMapsEqual = <K, V>(map1: Map<K, V>, map2: Map<K, V>): boolean => {
@@ -66,15 +67,23 @@ const MapView: React.FC<MapViewProps> = ({
   selectionMode,
   onTapMap,
   onGraphUpdate,
+  onBlockEdge,
+  graphLoading = false,
+  onBlockNode,
+  isBlockingNode = false,
 }) => {
   const [camera, setCamera] = useState({
     zoomLevel: 14,
-    centerCoordinate: [123.19549, 13.62617], // Naga City coordinates
+    centerCoordinate: [123.19549, 13.62617],
+    animationDuration: 500
   });
   const [graph, setGraph] = useState<Graph>({ nodes: new Map(), edges: new Map() });
   const [nodesFetched, setNodesFetched] = useState(false);
   const [edgesFetched, setEdgesFetched] = useState(false);
   const [visitedNodeIds, setVisitedNodeIds] = useState<string[]>([]);
+  const [highlightedEdge, setHighlightedEdge] = useState<[string, string] | null>(null);
+  const [blockedEdges, setBlockedEdges] = useState<{ source: string, target: string }[]>([]);
+  const [blockedNodes, setBlockedNodes] = useState<string[]>([]);
 
   const stableOnError = useCallback((error: string) => {
     onError(error);
@@ -84,38 +93,25 @@ const MapView: React.FC<MapViewProps> = ({
     const loadNodes = () => {
       const nodesMap = new Map<string, Node>();
 
-      if (!nodesGeoJSON || !Array.isArray(nodesGeoJSON.features)) {
-        stableOnError('Invalid nodesGeoJSON: No features array found.');
+      if (!nodesGeoJSON?.features) {
+        stableOnError('Invalid nodesGeoJSON data');
         return;
       }
 
       for (const feature of nodesGeoJSON.features) {
-        if (feature.properties.osmid && feature.geometry.type === 'Point') {
+        if (feature.properties?.osmid && feature.geometry?.type === 'Point') {
           const osmid = feature.properties.osmid.toString();
           const [lng, lat] = feature.geometry.coordinates;
           nodesMap.set(osmid, { osmid, lat, lng });
-        } else {
-          console.warn('Skipping invalid node:', feature);
         }
       }
 
-      if (nodesMap.size === 0) {
-        stableOnError('No valid nodes found in nodesGeoJSON.');
-        return;
-      }
-
-      setGraph((prev) => {
-        if (areMapsEqual(prev.nodes, nodesMap)) {
-          return prev;
-        }
-        console.log(`Loaded ${nodesMap.size} nodes from nodesGeoJSON`);
-        return { ...prev, nodes: nodesMap };
-      });
+      setGraph(prev => areMapsEqual(prev.nodes, nodesMap) ? prev : { ...prev, nodes: nodesMap });
       setNodesFetched(true);
     };
 
     loadNodes();
-  }, []);
+  }, [stableOnError]);
 
   useEffect(() => {
     if (!nodesFetched) return;
@@ -123,72 +119,42 @@ const MapView: React.FC<MapViewProps> = ({
     const loadEdges = () => {
       const edgesMap = new Map<string, Edge[]>();
 
-      if (!edgesGeoJSON || !Array.isArray(edgesGeoJSON.features)) {
-        stableOnError('Invalid edgesGeoJSON: No features array found.');
+      if (!edgesGeoJSON?.features) {
+        stableOnError('Invalid edgesGeoJSON data');
         return;
       }
 
-      let totalEdges = 0;
       for (const feature of edgesGeoJSON.features) {
-        const props = feature.properties || {};
-        const { u, v, length } = props;
-        if (u && v && length !== undefined && u !== v) {
-          const source = u.toString();
-          const target = v.toString();
+        const { u, v, length } = feature.properties || {};
+        if (u && v && length && u !== v) {
           const weight = parseFloat(length);
-
-          if (isNaN(weight)) {
-            console.warn(`Invalid length for edge ${u}-${v}: ${length}`);
-            continue;
+          if (!isNaN(weight)) {
+            const source = u.toString();
+            const target = v.toString();
+            
+            if (graph.nodes.has(source) && graph.nodes.has(target)) {
+              if (!edgesMap.has(source)) edgesMap.set(source, []);
+              edgesMap.get(source)?.push({ source, target, weight });
+              
+              if (!edgesMap.has(target)) edgesMap.set(target, []);
+              edgesMap.get(target)?.push({ source: target, target: source, weight });
+            }
           }
-
-          if (weight <= 0) {
-            console.warn(`Skipping edge ${u}-${v} with non-positive weight: ${weight}`);
-            continue;
-          }
-
-          if (graph.nodes.has(source) && graph.nodes.has(target)) {
-            if (!edgesMap.has(source)) edgesMap.set(source, []);
-            edgesMap.get(source)!.push({ source, target, weight });
-            totalEdges++;
-
-            if (!edgesMap.has(target)) edgesMap.set(target, []);
-            edgesMap.get(target)!.push({ source: target, target: source, weight });
-            totalEdges++;
-          } else {
-            console.warn(`Edge ${u}-${v} references invalid nodes. Skipping.`);
-          }
-        } else {
-          console.warn('Skipping edge with missing properties or self-loop:', props);
         }
       }
 
-      if (edgesMap.size === 0) {
-        stableOnError('No valid edges found in edgesGeoJSON.');
-        return;
-      }
-
-      console.log(`Loaded ${edgesMap.size} edge sets and ${totalEdges} total edges from edgesGeoJSON`);
-      setGraph((prev) => {
-        if (areMapsEqual(prev.edges, edgesMap)) {
-          return prev;
-        }
-        return { ...prev, edges: edgesMap };
-      });
+      setGraph(prev => areMapsEqual(prev.edges, edgesMap) ? prev : { ...prev, edges: edgesMap });
       setEdgesFetched(true);
     };
 
     loadEdges();
-  }, [nodesFetched, graph.nodes]);
-
-  const stableGraph = useMemo(() => graph, [graph.nodes.size, graph.edges.size]);
+  }, [nodesFetched, graph.nodes, stableOnError]);
 
   useEffect(() => {
     if (nodesFetched && edgesFetched) {
-      console.log(`Graph updated: ${stableGraph.nodes.size} nodes, ${stableGraph.edges.size} edge sets`);
-      onGraphUpdate(stableGraph);
+      onGraphUpdate(graph);
     }
-  }, [nodesFetched, edgesFetched, stableGraph, onGraphUpdate]);
+  }, [nodesFetched, edgesFetched, graph, onGraphUpdate]);
 
   useEffect(() => {
     if (startPoint && endPoint) {
@@ -202,50 +168,54 @@ const MapView: React.FC<MapViewProps> = ({
       if (maxDiff > 0.05) newZoom = 12;
       else if (maxDiff > 0.02) newZoom = 13;
 
-      setCamera({
+      setCamera(prev => ({
+        ...prev,
         zoomLevel: newZoom,
-        centerCoordinate: [centerLng, centerLat],
-      });
+        centerCoordinate: [centerLng, centerLat]
+      }));
     }
   }, [startPoint, endPoint]);
 
   useEffect(() => {
-    if (pathResult?.visitedNodes && pathResult.visitedNodes.length > 0) {
-      const visitedIds: string[] = [];
-      pathResult.visitedNodes.forEach(([lng, lat]) => {
-        for (const [osmid, node] of graph.nodes.entries()) {
-          if (Math.abs(node.lng - lng) < 0.00001 && Math.abs(node.lat - lat) < 0.00001) {
-            visitedIds.push(osmid);
-            break;
-          }
-        }
+    if (pathResult?.visitedNodes) {
+      const nodeMap = new Map<string, string>();
+      graph.nodes.forEach((node) => {
+        nodeMap.set(`${node.lng.toFixed(5)},${node.lat.toFixed(5)}`, node.osmid);
       });
+
+      const visitedIds = pathResult.visitedNodes
+        .map(([lng, lat]) => nodeMap.get(`${lng.toFixed(5)},${lat.toFixed(5)}`))
+        .filter(Boolean) as string[];
+
       setVisitedNodeIds(visitedIds);
-      console.log(`Mapped ${visitedIds.length} visited nodes to osmids`);
-    } else {
-      setVisitedNodeIds([]);
     }
   }, [pathResult, graph.nodes]);
 
+  useEffect(() => {
+    if (pathResult?.algorithm === 'd-star-lite' && blockedEdges.length > 0) {
+      onGraphUpdate({ ...graph, blockedEdges });
+    }
+  }, [pathResult, blockedEdges, graph, onGraphUpdate]);
+
+  useEffect(() => {
+    if (pathResult?.algorithm === 'd-star-lite' && blockedNodes.length > 0) {
+      onGraphUpdate({ ...graph, blockedNodes });
+    }
+  }, [pathResult, blockedNodes, graph, onGraphUpdate]);
+
   const getPathColor = (algorithm: string) => {
-    const color = {
+    return validateColor({
       dijkstra: '#FF9800',
       'a-star': '#4CAF50',
-      'd-star': '#9C27B0',
-      'd-star-lite': '#2196F3',
-    }[algorithm] || '#2196F3';
-    return validateColor(color);
+      'd-star-lite': '#FF5722',
+    }[algorithm] || '#2196F3');
   };
 
-  const handleFeaturePress = (event: any, source: 'nodes' | 'edges') => {
-    if (!event?.features?.length) {
-      stableOnError(`No ${source} found at this location.`);
-      return;
-    }
+  const handleFeaturePress = useCallback((event: any, source: 'nodes' | 'edges') => {
+    if (!event?.features?.length) return;
 
     const feature = event.features[0];
-
-    if (source === 'nodes' && feature?.geometry?.type === 'Point') {
+    if (source === 'nodes') {
       const [lng, lat] = feature.geometry.coordinates;
       if (selectionMode === 'start') {
         onPointSelected('start', { lat, lng });
@@ -253,176 +223,268 @@ const MapView: React.FC<MapViewProps> = ({
         onPointSelected('end', { lat, lng });
       }
     } else if (source === 'edges') {
-      const sourceProp = feature.properties.u;
-      const targetProp = feature.properties.v;
-      if (!sourceProp || !targetProp) {
-        stableOnError('Selected edge is missing node information.');
-        return;
-      }
+      const { u, v } = feature.properties;
+      if (!u || !v) return;
 
-      const sourceNode = graph.nodes.get(sourceProp.toString());
-      const targetNode = graph.nodes.get(targetProp.toString());
-      if (!sourceNode || !targetNode) {
-        stableOnError('Selected edge references invalid nodes.');
-        return;
+      const sourceNode = graph.nodes.get(u.toString());
+      const targetNode = graph.nodes.get(v.toString());
+      if (!sourceNode || !targetNode || 
+          blockedNodes.includes(sourceNode.osmid) || 
+          blockedNodes.includes(targetNode.osmid)) {
+        return; // Skip if either node is blocked
       }
 
       const edgeCoordinates = [
         [sourceNode.lng, sourceNode.lat],
-        [targetNode.lng, targetNode.lat],
+        [targetNode.lng, targetNode.lat]
       ];
 
-      const tapPoint = { lat: event.coordinates.latitude, lng: event.coordinates.longitude };
-      const sourceDistance = Math.sqrt(
-        Math.pow(sourceNode.lng - tapPoint.lng, 2) + Math.pow(sourceNode.lat - tapPoint.lat, 2)
+      const tapPoint = event.coordinates;
+      const sourceDist = Math.hypot(
+        sourceNode.lng - tapPoint.longitude,
+        sourceNode.lat - tapPoint.latitude
       );
-      const targetDistance = Math.sqrt(
-        Math.pow(targetNode.lng - tapPoint.lng, 2) + Math.pow(targetNode.lat - tapPoint.lat, 2)
+      const targetDist = Math.hypot(
+        targetNode.lng - tapPoint.longitude,
+        targetNode.lat - tapPoint.latitude
       );
 
-      const nearest = sourceDistance < targetDistance ? sourceNode : targetNode;
-      const lng = nearest.lng;
-      const lat = nearest.lat;
-
+      const nearest = sourceDist < targetDist ? sourceNode : targetNode;
       if (selectionMode === 'start') {
-        onPointSelected('start', { lat, lng }, edgeCoordinates);
+        onPointSelected('start', { lat: nearest.lat, lng: nearest.lng }, edgeCoordinates);
       } else if (selectionMode === 'end') {
-        onPointSelected('end', { lat, lng }, edgeCoordinates);
+        onPointSelected('end', { lat: nearest.lat, lng: nearest.lng }, edgeCoordinates);
       }
-    }
-  };
 
-  const onTapMapHandler = (event: any) => {
-    onTapMap(event);
-  };
+      setHighlightedEdge([u.toString(), v.toString()]);
+      setTimeout(() => setHighlightedEdge(null), 2000);
+    }
+  }, [selectionMode, graph.nodes, onPointSelected, blockedNodes]);
+
+  const handleEdgeLongPress = useCallback((event: any) => {
+    if (!onBlockEdge || !event?.features?.length) return;
+    const { u, v } = event.features[0].properties;
+    onBlockEdge(u.toString(), v.toString());
+    setBlockedEdges(prev => [...prev, { source: u.toString(), target: v.toString() }]);
+    Alert.alert('Edge Blocked', `Blocked connection between nodes ${u} and ${v}`);
+  }, [onBlockEdge]);
+
+  const handleNodeLongPress = useCallback((event: any) => {
+    if (!event?.features?.length) return;
+
+    const feature = event.features[0];
+    const osmid = feature.properties?.osmid;
+    if (!osmid) return;
+
+    setBlockedNodes(prev => [...prev, osmid]);
+    Alert.alert('Node Blocked', `Blocked node with ID: ${osmid}`);
+  }, []);
+
+  const handleNodeTap = useCallback((event: any) => {
+    if (!isBlockingNode || !event?.features?.length) return;
+
+    const feature = event.features[0];
+    const osmid = feature.properties?.osmid;
+    if (!osmid) return;
+
+    if (onBlockNode) {
+      onBlockNode(osmid);
+    }
+  }, [isBlockingNode, onBlockNode]);
 
   useEffect(() => {
-    if (pathResult && pathResult.coordinates) {
-      pathResult.coordinates.forEach((coord, index) => {
-        if (!Array.isArray(coord) || coord.length !== 2 || typeof coord[0] !== 'number' || typeof coord[1] !== 'number') {
-          stableOnError(`Invalid path coordinate at index ${index}.`);
-        }
-      });
+    if (isBlockingNode) {
+      Alert.alert('Blocking Mode', 'Tap on a node to block it.');
     }
-  }, [pathResult, stableOnError]);
+  }, [isBlockingNode]);
+
+  const onTapMapHandler = useCallback((event: any) => {
+    if (selectionMode === 'none') {
+      onTapMap(event);
+    }
+  }, [selectionMode, onTapMap]);
 
   return (
-    <MapboxGL.MapView
-    style={StyleSheet.absoluteFill}
-    styleURL={MapboxGL.StyleURL.Street}
-    onDidFailLoadingMap={(error) => stableOnError(`Map failed to load: ${error.message}`)}
-    onDidFinishLoadingMap={onMapLoaded}
-    logoEnabled={true}
-    attributionEnabled={true}
-    compassEnabled={true}
-    onPress={onTapMapHandler}
-    >
-    <MapboxGL.Camera
-    zoomLevel={camera.zoomLevel}
-    centerCoordinate={camera.centerCoordinate}
-    animationDuration={500}
-    />
-
-    <MapboxGL.ShapeSource
-    id="nodes"
-    shape={nodesGeoJSON}
-    onPress={(event) => handleFeaturePress(event, 'nodes')}
-    >
-    <MapboxGL.CircleLayer
-    id="nodes-layer"
-    style={{
-      circleRadius: selectionMode === 'none' ? 3 : 8,
-      circleStrokeWidth: selectionMode === 'none' ? 1 : 2,
-      circleStrokeColor: '#fff',
-      visibility: 'visible',
-      circleColor: visitedNodeIds.length > 0
-      ? [
-        'match',
-        ['get', 'osmid'],
-        ...visitedNodeIds.flatMap((id) => [id, validateColor('#FF0000')]),
-          validateColor(
-            selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
-          ),
-      ]
-      : validateColor(
-        selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
-      ),
-    }}
-    minZoomLevel={10}
-    filter={['==', ['geometry-type'], 'Point']}
-    hitbox={{ width: 30, height: 30 }}
-    />
-    </MapboxGL.ShapeSource>
-
-    <MapboxGL.ShapeSource
-    id="edges"
-    shape={edgesGeoJSON}
-    onPress={(event) => handleFeaturePress(event, 'edges')}
-    >
-    <MapboxGL.LineLayer
-    id="edges-layer"
-    style={{
-      lineColor: validateColor(selectionMode === 'none' ? '#1976D2' : selectionMode === 'start' ? '#4CAF50' : '#F44336'),
-          lineWidth: selectionMode === 'none' ? 2 : 4,
-          visibility: 'visible',
-    }}
-    minZoomLevel={10}
-    hitbox={{ width: 20, height: 20 }}
-    />
-    </MapboxGL.ShapeSource>
-
-    {pathResult && pathResult.coordinates && pathResult.coordinates.length > 0 && (
-      <MapboxGL.ShapeSource
-      id="pathSource"
-      shape={{
-        type: 'Feature',
-        properties: {},
-        geometry: {
-          type: 'LineString',
-          coordinates: pathResult.coordinates,
-        },
-      }}
+    <View style={StyleSheet.absoluteFill}>
+      <MapboxGL.MapView
+        style={StyleSheet.absoluteFill}
+        styleURL={MapboxGL.StyleURL.Street}
+        onDidFailLoadingMap={() => stableOnError('Map failed to load')}
+        onDidFinishLoadingMap={onMapLoaded}
+        logoEnabled={true}
+        attributionEnabled={true}
+        compassEnabled={true}
+        onPress={(feature) => onTapMapHandler({ features: [feature], coordinates: { latitude: feature.geometry.coordinates[1], longitude: feature.geometry.coordinates[0] } })}
       >
-      <MapboxGL.LineLayer
-      id="pathLayer"
-      style={{
-        lineColor: getPathColor(pathResult.algorithm),
-                                                                                   lineWidth: 4,
-                                                                                   lineCap: 'round',
-                                                                                   lineJoin: 'round',
-                                                                                   visibility: 'visible',
-                                                                                   lineOpacity: 1.0,
-      }}
-      aboveLayerID="edges-layer"
-      onError={(error: any) => stableOnError('Failed to render path layer.')}
-      />
-      </MapboxGL.ShapeSource>
-    )}
+        <MapboxGL.Camera
+          zoomLevel={camera.zoomLevel}
+          centerCoordinate={camera.centerCoordinate as [number, number]}
+          animationDuration={camera.animationDuration}
+        />
 
-    {startPoint && (
-      <MapboxGL.PointAnnotation id="startPoint" coordinate={[startPoint.lng, startPoint.lat]} title="Start">
-      <View style={[styles.mapMarker, styles.startMarker]}>
-      <Text style={styles.markerText}>S</Text>
-      </View>
-      </MapboxGL.PointAnnotation>
-    )}
+        <MapboxGL.ShapeSource
+          id="nodes"
+          shape={nodesGeoJSON as GeoJSON.FeatureCollection}
+          onPress={(event: { features?: any[] }) => handleFeaturePress(event, 'nodes')}
+          onLongPress={(event: { features?: any[] }) => handleNodeLongPress(event)}
+        >
+          <MapboxGL.CircleLayer
+        id="nodes-layer"
+        style={{
+          circleRadius: selectionMode === 'none' ? 3 : 8,
+          circleStrokeWidth: selectionMode === 'none' ? 1 : 2,
+          circleStrokeColor: '#fff',
+          circleColor: visitedNodeIds.length > 0
+            ? [
+          'match',
+          ['get', 'osmid'],
+          ...visitedNodeIds.flatMap(id => [id, validateColor('#FF0000')]),
+          validateColor(
+            selectionMode === 'none' ? '#2196F3' : 
+            selectionMode === 'start' ? '#4CAF50' : '#F44336'
+          ),
+            ]
+            : validateColor(
+          selectionMode === 'none' ? '#2196F3' : 
+          selectionMode === 'start' ? '#4CAF50' : '#F44336'
+            ),
+        }}
+        minZoomLevel={10}
+        filter={['==', ['geometry-type'], 'Point']}
+          />
+        </MapboxGL.ShapeSource>
 
-    {endPoint && (
-      <MapboxGL.PointAnnotation id="endPoint" coordinate={[endPoint.lng, endPoint.lat]} title="End">
-      <View style={[styles.mapMarker, styles.endMarker]}>
-      <Text style={styles.markerText}>E</Text>
-      </View>
-      </MapboxGL.PointAnnotation>
-    )}
+        <MapboxGL.ShapeSource
+          id="edges"
+          shape={edgesGeoJSON as GeoJSON.FeatureCollection}
+          onPress={(event: { features?: any[] }) => handleFeaturePress(event, 'edges')}
+          onLongPress={onBlockEdge ? (event: { features?: any[] }) => handleEdgeLongPress(event) : undefined}
+        >
+          <MapboxGL.LineLayer
+        id="edges-layer"
+        style={{
+          lineColor: [
+            'case',
+            ['all',
+          ['==', ['get', 'u'], highlightedEdge?.[0] ?? ''],
+          ['==', ['get', 'v'], highlightedEdge?.[1] ?? '']
+            ],
+            '#FF0000',
+            validateColor(
+          selectionMode === 'none' ? '#1976D2' : 
+          selectionMode === 'start' ? '#4CAF50' : '#F44336'
+            )
+          ],
+          lineWidth: selectionMode === 'none' ? 2 : 4,
+        }}
+        minZoomLevel={10}
+          />
+        </MapboxGL.ShapeSource>
 
-    {selectionMode !== 'none' && (
-      <View style={styles.selectionIndicator}>
-      <Text style={styles.selectionText}>
-      {selectionMode === 'start' ? 'Select start point' : 'Select end point'}
-      </Text>
-      </View>
-    )}
-    </MapboxGL.MapView>
+        {blockedEdges?.length > 0 && (
+          <MapboxGL.ShapeSource
+        id="blockedEdges"
+        shape={{
+          type: 'FeatureCollection',
+          features: blockedEdges.map(({ source, target }) => {
+            const srcNode = graph.nodes.get(source);
+            const tgtNode = graph.nodes.get(target);
+            if (!srcNode || !tgtNode) return null;
+
+            return {
+          type: 'Feature',
+          geometry: {
+            type: 'LineString',
+            coordinates: [
+              [srcNode.lng, srcNode.lat],
+              [tgtNode.lng, tgtNode.lat],
+            ],
+          },
+          properties: {},
+            };
+          }).filter(Boolean) as GeoJSON.Feature[],
+        }}
+          >
+        <MapboxGL.LineLayer
+          id="blockedEdgesLayer"
+          style={{
+            lineColor: '#FF0000',
+            lineWidth: 3,
+            lineDasharray: [2, 2],
+          }}
+        />
+          </MapboxGL.ShapeSource>
+        )}
+
+        {pathResult?.coordinates && pathResult.coordinates.length > 0 && (
+          <MapboxGL.ShapeSource
+        id="pathSource"
+        shape={{
+          type: 'Feature',
+          properties: {},
+          geometry: {
+            type: 'LineString',
+            coordinates: pathResult.coordinates,
+          },
+        } as GeoJSON.Feature}
+          >
+        <MapboxGL.LineLayer
+          id="pathLayer"
+          style={{
+            lineColor: getPathColor(pathResult.algorithm),
+            lineWidth: 4,
+            lineCap: 'round',
+            lineJoin: 'round',
+            lineOpacity: 1.0,
+          }}
+          aboveLayerID="edges-layer"
+        />
+          </MapboxGL.ShapeSource>
+        )}
+
+        {startPoint && (
+          <MapboxGL.PointAnnotation id="startPoint" coordinate={[startPoint.lng, startPoint.lat]}>
+        <View style={[styles.mapMarker, styles.startMarker]}>
+          <Text style={styles.markerText}>S</Text>
+        </View>
+          </MapboxGL.PointAnnotation>
+        )}
+
+        {endPoint && (
+          <MapboxGL.PointAnnotation id="endPoint" coordinate={[endPoint.lng, endPoint.lat]}>
+        <View style={[styles.mapMarker, styles.endMarker]}>
+          <Text style={styles.markerText}>E</Text>
+        </View>
+          </MapboxGL.PointAnnotation>
+        )}
+
+        {!pathResult && startPoint && endPoint && (
+          <>
+        <MapboxGL.PointAnnotation coordinate={[startPoint.lng, startPoint.lat]} id="debugStartPoint">
+          <View style={styles.debugMarker} />
+        </MapboxGL.PointAnnotation>
+        <MapboxGL.PointAnnotation coordinate={[endPoint.lng, endPoint.lat]} id="debugEndPoint">
+          <View style={styles.debugMarker} />
+        </MapboxGL.PointAnnotation>
+          </>
+        )}
+
+        {selectionMode !== 'none' && (
+          <View style={styles.selectionIndicator}>
+        <Text style={styles.selectionText}>
+          {selectionMode === 'start' ? 'Select start point' : 'Select end point'}
+        </Text>
+          </View>
+        )}
+      </MapboxGL.MapView>
+
+      {graphLoading && (
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#0000ff" />
+          <Text style={styles.loadingText}>Loading map data...</Text>
+        </View>
+      )}
+    </View>
   );
 };
 
@@ -449,10 +511,47 @@ const styles = StyleSheet.create({
     top: 20,
     alignSelf: 'center',
     backgroundColor: 'rgba(0,0,0,0.7)',
-                                 padding: 10,
-                                 borderRadius: 20,
+    padding: 10,
+    borderRadius: 20,
   },
   selectionText: { color: 'white', fontWeight: 'bold' },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
+  },
+  loadingText: {
+    marginTop: 10,
+    fontSize: 16,
+  },
+  debugMarker: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: 'red',
+  },
 });
 
 export default MapView;
+
+<MapView
+  onMapLoaded={() => console.log('Map loaded')}
+  onError={(error) => console.error('Map error:', error)}
+  startPoint={{ lat: 13.62617, lng: 123.19549 }}
+  endPoint={{ lat: 13.63000, lng: 123.20000 }}
+  pathResult={{
+    coordinates: [
+      [123.19549, 13.62617],
+      [123.20000, 13.63000],
+    ],
+    algorithm: 'dijkstra',
+  }}
+  onPointSelected={(type, coordinates) => console.log(`${type} point selected:`, coordinates)}
+  selectionMode="start"
+  onTapMap={(event) => console.log('Map tapped:', event)}
+  onGraphUpdate={(graph) => console.log('Graph updated:', graph)}
+  onBlockEdge={(source, target) => console.log(`Blocked edge: ${source} -> ${target}`)}
+  graphLoading={false}
+/>
