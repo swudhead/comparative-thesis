@@ -221,7 +221,7 @@ const MapView: React.FC<MapViewProps> = ({
       dijkstra: '#FF9800',
       'a-star': '#4CAF50',
       'd-star': '#9C27B0',
-      'd-star-lite': '#2196F3',
+      'd-star-lite': '#3F51B5',
       'gbfs': '#FF5722',
       'bellman-ford': '#FF9800',
     }[algorithm] || '#2196F3';
