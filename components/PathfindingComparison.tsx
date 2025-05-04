@@ -1,9 +1,9 @@
+// PathfindingComparison.tsx
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { StyleSheet, View, Alert, Button } from 'react-native';
 import MapView from './MapView';
 import ControlPanel from './ControlPanel';
-
-import { haversineDistance,dStarLitePathfinding,findNearestNode, dijkstraPathfinding, getPerformanceMetrics, algorithms, Algorithm, isGraphConnected } from '../utils/algorithms';
+import { haversineDistance, dStarLitePathfinding, findNearestNode, dijkstraPathfinding, getPerformanceMetrics, algorithms, Algorithm, isGraphConnected, gbfsPathfinding, bellmanFordPathfinding } from '../utils/algorithms';
 
 interface Node {
   osmid: string;
@@ -27,9 +27,20 @@ interface PathResult {
   coordinates: number[][];
   algorithm: string;
   time: string;
+  travelTime?: string;
   distance: string;
   nodes: number;
   visitedNodes: number[][];
+  edgesExplored?: number;
+  pathNodeCount?: number;
+}
+
+interface ComparisonResult {
+  time: string;
+  distance: string;
+  nodes: number;
+  edgesExplored: number;
+  pathNodeCount: number;
 }
 
 const PathfindingComparison: React.FC = () => {
@@ -45,10 +56,11 @@ const PathfindingComparison: React.FC = () => {
   const [selectionMode, setSelectionMode] = useState<'start' | 'end' | 'none'>('none');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isComputing, setIsComputing] = useState(false);
-  const [comparisonResults, setComparisonResults] = useState<Record<string, { time: string; distance: string; nodes: number }> | null>(null);
+  const [comparisonResults, setComparisonResults] = useState<Record<string, ComparisonResult> | null>(null);
   const [blockedEdges, setBlockedEdges] = useState<{source: string, target: string}[]>([]);
   const [blockedNodes, setBlockedNodes] = useState<string[]>([]);
   const [isBlockingNode, setIsBlockingNode] = useState(false);
+  const [showVisitedNodes, setShowVisitedNodes] = useState(false);
 
   const lastPathfindingInputs = useRef<string | null>(null);
 
@@ -115,6 +127,7 @@ const PathfindingComparison: React.FC = () => {
     setSelectionMode('none');
     setErrorMsg(null);
     setBlockedEdges([]);
+    setShowVisitedNodes(false);
     lastPathfindingInputs.current = null;
   }, []);
 
@@ -126,6 +139,7 @@ const PathfindingComparison: React.FC = () => {
     setPathResult(null);
     setComparisonResults(null);
     setErrorMsg(null);
+    setShowVisitedNodes(false);
     lastPathfindingInputs.current = null;
   }, [startPoint, endPoint, startEdge, endEdge]);
 
@@ -182,110 +196,115 @@ const PathfindingComparison: React.FC = () => {
       setErrorMsg('Please select an algorithm.');
       return;
     }
-
-    // Validate graph connectivity
-    if (!isGraphConnected(graph)) {
-      setErrorMsg('Graph contains disconnected components');
+    if (!graph || !graph.nodes || !graph.edges || graph.nodes.size === 0 || graph.edges.size === 0) {
+      setErrorMsg('Graph data not loaded.');
       return;
     }
 
-    // Check if start/end nodes exist in the graph
-    const startNode = findNearestNode(graph.nodes, startPoint);
-    const endNode = findNearestNode(graph.nodes, endPoint);
-    console.log("Start/End nodes exist:", !!startNode, !!endNode);
-
-    if (!startNode || !endNode) {
-      setErrorMsg('Start or end point is not connected to the graph.');
-      return;
-    }
-
-    // Verify start and end nodes have edges
-    const startEdges = graph.edges.get(startNode.osmid)?.filter(e => !e.blocked).length || 0;
-    const endEdges = graph.edges.get(endNode.osmid)?.filter(e => !e.blocked).length || 0;
-
-    if (startEdges === 0 || endEdges === 0) {
-      setErrorMsg(`Start or end node is isolated (start edges: ${startEdges}, end edges: ${endEdges})`);
-      return;
-    }
-
-    // Existing cache key logic...
-    const cacheKey = {
-      graphVersion,
-      algorithm: selectedAlgorithm.id,
-      start: `${startPoint.lat.toFixed(7)},${startPoint.lng.toFixed(7)}`,
-      end: `${endPoint.lat.toFixed(7)},${endPoint.lng.toFixed(7)}`,
-      blockedEdges: blockedEdges
-        .map(e => `${e.source}-${e.target}`)
-        .sort()
-        .join('|'),
-    };
-
-    const inputKey = JSON.stringify(cacheKey);
-    console.log('Cache Key:', cacheKey);
-
+    const inputKey = `${startPoint.lat},${startPoint.lng}-${endPoint.lat},${endPoint.lng}-${selectedAlgorithm.id}`;
     if (lastPathfindingInputs.current === inputKey) {
-      console.log(`Skipping redundant pathfinding (graph v${graphVersion})`);
+      console.log('Skipping redundant pathfinding call for:', inputKey);
       return;
     }
     lastPathfindingInputs.current = inputKey;
 
     setIsComputing(true);
     setErrorMsg(null);
+    setShowVisitedNodes(false);
 
     try {
-      let result;
-      if (selectedAlgorithm.id === 'd-star-lite') {
-        result = await dStarLitePathfinding(
-          graph, 
-          startPoint, 
-          endPoint, 
-          blockedEdges,
-          new Set(blockedNodes) // Pass blocked nodes
-        );
-      } else {
-        result = await dijkstraPathfinding(
-          { ...graph, blockedNodes: new Set(blockedNodes) }, // Pass blocked nodes
-          startPoint,
-          endPoint,
-          selectedAlgorithm.id
-        );
+      const algorithmsToRun = [
+        { id: 'dijkstra', func: () => dijkstraPathfinding(graph, startPoint, endPoint, 'dijkstra') },
+        { id: 'a-star', func: () => dijkstraPathfinding(graph, startPoint, endPoint, 'a-star') },
+        { id: 'gbfs', func: () => gbfsPathfinding(graph, startPoint, endPoint) },
+        { id: 'bellman-ford', func: () => bellmanFordPathfinding(graph, startPoint, endPoint) },
+        { id: 'd-star-lite', func: () => dStarLitePathfinding(graph, startPoint, endPoint, blockedEdges) }
+      ];
+
+      const results: Record<string, { result: any; travelTime: string }> = {};
+
+      for (const algo of algorithmsToRun) {
+        const result = await algo.func();
+        const totalDistance = result.distance * 1000; // Convert km to meters
+        const speed = 4.17; // meters per second (15 km/h)
+        const travelTime = totalDistance / speed; // Estimated travel time in seconds
+
+        results[algo.id] = {
+          result,
+          travelTime: `${travelTime.toFixed(2)}s`,
+        };
       }
 
-      setPathResult({
-        coordinates: result.path,
+      const selectedResult = results[selectedAlgorithm.id].result;
+      const selectedTravelTime = results[selectedAlgorithm.id].travelTime;
+
+      const pathResult: PathResult = {
+        coordinates: selectedResult.path,
         algorithm: selectedAlgorithm.id,
-        time: `${(result.time / 1000).toFixed(2)}s`,
-        distance: `${result.distance.toFixed(1)}km`,
-        nodes: result.nodesVisited || result.path.length,
-        visitedNodes: result.visitedNodes || [],
-      });
+        time: `${(selectedResult.time / 1000).toFixed(2)}s`,
+        travelTime: selectedTravelTime,
+        distance: `${selectedResult.distance.toFixed(1)}km`,
+        nodes: selectedResult.nodesVisited,
+        visitedNodes: selectedResult.visitedNodes,
+        edgesExplored: selectedResult.edgesExplored,
+        pathNodeCount: selectedResult.pathNodeCount,
+      };
 
-      setComparisonResults({
+      const newComparisonResults: Record<string, ComparisonResult> = {
         dijkstra: {
-          time: selectedAlgorithm.id === 'dijkstra'
-            ? `${(result.time / 1000).toFixed(2)}s`
-            : getPerformanceMetrics('dijkstra', result.distance).time,
-          distance: `${result.distance.toFixed(1)}km`,
-          nodes: selectedAlgorithm.id === 'dijkstra'
-            ? result.nodesVisited || result.path.length
-            : getPerformanceMetrics('dijkstra', result.distance).nodes,
+          time: `${(results['dijkstra'].result.time / 1000).toFixed(2)}s`,
+          distance: `${results['dijkstra'].result.distance.toFixed(1)}km`,
+          nodes: results['dijkstra'].result.nodesVisited,
+          edgesExplored: results['dijkstra'].result.edgesExplored,
+          pathNodeCount: results['dijkstra'].result.pathNodeCount,
         },
-        'a-star': getPerformanceMetrics('a-star', result.distance),
-        'd-star-lite': getPerformanceMetrics('d-star-lite', result.distance),
-      });
+        'a-star': {
+          time: `${(results['a-star'].result.time / 1000).toFixed(2)}s`,
+          distance: `${results['a-star'].result.distance.toFixed(1)}km`,
+          nodes: results['a-star'].result.nodesVisited,
+          edgesExplored: results['a-star'].result.edgesExplored,
+          pathNodeCount: results['a-star'].result.pathNodeCount,
+        },
+        gbfs: {
+          time: `${(results['gbfs'].result.time / 1000).toFixed(2)}s`,
+          distance: `${results['gbfs'].result.distance.toFixed(1)}km`,
+          nodes: results['gbfs'].result.nodesVisited,
+          edgesExplored: results['gbfs'].result.edgesExplored,
+          pathNodeCount: results['gbfs'].result.pathNodeCount,
+        },
+        'bellman-ford': {
+          time: `${(results['bellman-ford'].result.time / 1000).toFixed(2)}s`,
+          distance: `${results['bellman-ford'].result.distance.toFixed(1)}km`,
+          nodes: results['bellman-ford'].result.nodesVisited,
+          edgesExplored: results['bellman-ford'].result.edgesExplored,
+          pathNodeCount: results['bellman-ford'].result.pathNodeCount,
+        },
+        'd-star-lite': {
+          time: `${(results['d-star-lite'].result.time / 1000).toFixed(2)}s`,
+          distance: `${results['d-star-lite'].result.distance.toFixed(1)}km`,
+          nodes: results['d-star-lite'].result.nodesVisited,
+          edgesExplored: results['d-star-lite'].result.edgesExplored,
+          pathNodeCount: results['d-star-lite'].result.pathNodeCount,
+        },
+      };
 
+      setPathResult(pathResult);
+      setComparisonResults(newComparisonResults);
+      setIsComputing(false);
+
+      console.log('Final pathResult set:', pathResult);
     } catch (error: any) {
       setErrorMsg(`Error computing path: ${error.message || 'Unknown error'}`);
-    } finally {
       setIsComputing(false);
     }
-  }, [graphVersion, startPoint, endPoint, selectedAlgorithm, blockedEdges, startEdge, endEdge, graph, blockedNodes]);
+  }, [selectedAlgorithm, startPoint, endPoint, startEdge, endEdge, graph]);
 
   const onAlgorithmSelect = useCallback((algorithm: Algorithm) => {
     setSelectedAlgorithm(algorithm);
     setPathResult(null);
     setComparisonResults(null);
     setErrorMsg(null);
+    setShowVisitedNodes(false);
     lastPathfindingInputs.current = null;
   }, []);
 
@@ -294,6 +313,8 @@ const PathfindingComparison: React.FC = () => {
       dijkstra: "Dijkstra's algorithm guarantees the shortest path in a weighted graph but explores all possible nodes.",
       'a-star': 'A* uses heuristics to optimize pathfinding, making it faster than Dijkstra in many cases.',
       'd-star-lite': 'D* Lite is an optimized version of D*, efficient for dynamic path updates with changing edge costs.',
+      gbfs: 'Greedy Best-First Search prioritizes nodes closest to the destination (by straight-line distance), often finding a path quickly but not necessarily the shortest.',
+      'bellman-ford': 'Bellman-Ford finds the shortest path and can handle negative weights, but is slower than Dijkstra.',
     };
     Alert.alert(algorithm.name, descriptions[algorithm.id] || 'No description available.');
   }, []);
@@ -314,43 +335,38 @@ const PathfindingComparison: React.FC = () => {
 
   return (
     <View style={styles.container}>
-      <MapView
-        onMapLoaded={onMapLoaded}
-        onError={onError}
-        startPoint={startPoint}
-        endPoint={endPoint}
-        pathResult={pathResult}
-        onPointSelected={onPointSelected}
-        selectionMode={selectionMode}
-        onTapMap={onTapMap}
-        onGraphUpdate={onGraphUpdate}
-        onBlockEdge={onBlockEdge}
-        onBlockNode={onBlockNode}
-        isBlockingNode={isBlockingNode}
-      />
-      <ControlPanel
-        mapLoaded={mapLoaded}
-        selectedAlgorithm={selectedAlgorithm}
-        startPoint={startPoint}
-        endPoint={endPoint}
-        isComputing={isComputing}
-        comparisonResults={comparisonResults}
-        onAlgorithmSelect={onAlgorithmSelect}
-        onAlgorithmInfo={onAlgorithmInfo}
-        onSelectStartPoint={onSelectStartPoint}
-        onSelectEndPoint={onSelectEndPoint}
-        onStartPathfinding={fetchDirections}
-        onClearPoints={onClearPoints}
-        onSwapPoints={onSwapPoints}
-        selectionMode={selectionMode}
-        isBlockingNode={isBlockingNode}
-        onToggleBlockingMode={toggleBlockingMode}
-      />
-      <Button
-        title="Calculate Path"
-        onPress={fetchDirections}
-        disabled={!canCalculatePath}
-      />
+    <MapView
+    onMapLoaded={onMapLoaded}
+    onError={onError}
+    startPoint={startPoint}
+    endPoint={endPoint}
+    pathResult={pathResult}
+    onPointSelected={onPointSelected}
+    selectionMode={selectionMode}
+    onTapMap={onTapMap}
+    onGraphUpdate={onGraphUpdate}
+    showVisitedNodes={showVisitedNodes}
+    />
+    <ControlPanel
+    key={comparisonResults ? JSON.stringify(comparisonResults) : 'no-results'}
+    mapLoaded={mapLoaded}
+    selectedAlgorithm={selectedAlgorithm}
+    startPoint={startPoint}
+    endPoint={endPoint}
+    isComputing={isComputing}
+    comparisonResults={comparisonResults}
+    travelTime={pathResult?.travelTime}
+    showVisitedNodes={showVisitedNodes}
+    onShowVisitedNodesChange={setShowVisitedNodes}
+    onAlgorithmSelect={onAlgorithmSelect}
+    onAlgorithmInfo={onAlgorithmInfo}
+    onSelectStartPoint={onSelectStartPoint}
+    onSelectEndPoint={onSelectEndPoint}
+    onStartPathfinding={fetchDirections}
+    onClearPoints={onClearPoints}
+    onSwapPoints={onSwapPoints}
+    selectionMode={selectionMode}
+    />
     </View>
   );
 };

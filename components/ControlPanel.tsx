@@ -8,6 +8,7 @@ import {
   ActivityIndicator,
   Animated,
   Alert,
+  Switch,
 } from 'react-native';
 import { algorithm } from '../utils/algorithms';
 
@@ -17,7 +18,13 @@ type ControlPanelProps = {
   startPoint: { lat: number; lng: number } | null;
   endPoint: { lat: number; lng: number } | null;
   isComputing: boolean;
-  comparisonResults: Record<string, { time: string; distance: string; nodes: number }> | null;
+  comparisonResults: Record<
+  string,
+  { time: string; distance: string; nodes: number; edgesExplored: number; pathNodeCount: number }
+  > | null;
+  travelTime?: string;
+  showVisitedNodes: boolean; // New prop for toggle state
+  onShowVisitedNodesChange: (value: boolean) => void; // New prop for toggle handler
   onAlgorithmSelect: (algorithm: algorithm) => void;
   onAlgorithmInfo: (algorithm: algorithm) => void;
   onSelectStartPoint: () => void;
@@ -37,6 +44,9 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   endPoint,
   isComputing,
   comparisonResults,
+  travelTime,
+  showVisitedNodes,
+  onShowVisitedNodesChange,
   onAlgorithmSelect,
   onAlgorithmInfo,
   onSelectStartPoint,
@@ -52,19 +62,23 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   const panelHeight = React.useRef(new Animated.Value(240)).current;
   const [blockedNodes, setBlockedNodes] = useState<string[]>([]);
 
-  // Import algorithms from utils
   const { algorithms } = require('../utils/algorithms');
 
-  // Auto-expand panel when comparisonResults are available
+  useEffect(() => {
+    console.log('ControlPanel received props:');
+    console.log('- selectedAlgorithm:', selectedAlgorithm);
+    console.log('- comparisonResults:', comparisonResults);
+    console.log('- showVisitedNodes:', showVisitedNodes);
+  }, [selectedAlgorithm, comparisonResults, showVisitedNodes]);
+
   useEffect(() => {
     if (comparisonResults && !expanded) {
       toggleExpansion();
     }
   }, [comparisonResults, expanded]);
 
-  // Toggle control panel expansion
   const toggleExpansion = () => {
-    const targetHeight = expanded ? 240 : 420;
+    const targetHeight = expanded ? 240 : 400; // Increased height to accommodate toggle
 
     Animated.spring(panelHeight, {
       toValue: targetHeight,
@@ -109,13 +123,12 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   return (
     <Animated.View style={[styles.controlPanel, { height: panelHeight }]}>
     <View style={styles.headerBar}>
-    <Text style={styles.headerText}>Algorithm Controls</Text>
+    <Text style={styles.headerText}>Comparative Analysis for Algorithms</Text>
     <TouchableOpacity onPress={toggleExpansion} style={styles.expandButton}>
     <Text style={styles.expandButtonText}>{expanded ? '▲' : '▼'}</Text>
     </TouchableOpacity>
     </View>
 
-    {/* Algorithm selection */}
     <View style={styles.algorithmScrollContainer}>
     <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.algorithmScroll}>
     {algorithms.map((algorithm: algorithm) => (
@@ -142,7 +155,6 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
     </ScrollView>
     </View>
 
-    {/* Action buttons */}
     <View style={styles.actionContainer}>
     <View style={styles.pointButtonsRow}>
     <TouchableOpacity
@@ -246,18 +258,24 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   </View>
   </View>
 
-  {/* Results Section */}
   {expanded && (
     <ScrollView style={styles.resultsScrollView} contentContainerStyle={styles.resultsScrollContent}>
     {comparisonResults && selectedAlgorithm ? (
       <View style={styles.resultsContainer}>
       <Text style={styles.resultsTitle}>Results for {selectedAlgorithm?.name}:</Text>
       {comparisonResults[selectedAlgorithm.id] ? (
+        <View>
         <View style={styles.resultsBox}>
         <View style={styles.resultItem}>
-        <Text style={styles.resultLabel}>Time</Text>
+        <Text style={styles.resultLabel}>Exec. Time</Text>
         <Text style={styles.resultValue}>
         {comparisonResults[selectedAlgorithm.id]?.time || '---'}
+        </Text>
+        </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Travel Time</Text>
+        <Text style={styles.resultValue}>
+        {travelTime || '---'}
         </Text>
         </View>
         <View style={styles.resultItem}>
@@ -272,6 +290,30 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         {comparisonResults[selectedAlgorithm.id]?.nodes || '---'}
         </Text>
         </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Edges Explored</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.edgesExplored || '---'}
+        </Text>
+        </View>
+        <View style={styles.resultItem}>
+        <Text style={styles.resultLabel}>Path Nodes</Text>
+        <Text style={styles.resultValue}>
+        {comparisonResults[selectedAlgorithm.id]?.pathNodeCount || '---'}
+        </Text>
+        </View>
+        </View>
+
+        {/* Toggle for Visited Nodes */}
+        <View style={styles.toggleContainer}>
+        <Text style={styles.toggleLabel}>Show Visited Nodes</Text>
+        <Switch
+        value={showVisitedNodes}
+        onValueChange={onShowVisitedNodesChange}
+        trackColor={{ false: '#767577', true: '#81b0ff' }}
+        thumbColor={showVisitedNodes ? '#2196F3' : '#f4f3f4'}
+        />
+        </View>
         </View>
       ) : (
         <Text style={styles.resultValue}>No results available for {selectedAlgorithm.name}</Text>
@@ -282,10 +324,10 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
         "Dijkstra's algorithm guarantees the shortest path but explores more nodes than A*."}
         {selectedAlgorithm?.id === 'a-star' &&
           "A* uses heuristics to find paths more efficiently than Dijkstra, resulting in faster computation."}
-          {selectedAlgorithm?.id === 'd-star' &&
-            "D* is designed for partially known environments, useful when the map may change."}
-            {selectedAlgorithm?.id === 'd-star-lite' &&
-              "D* Lite improves on D* with better performance in dynamic environments."}
+          {selectedAlgorithm?.id === 'bfs' &&
+            "Breadth-First Search explores nodes level by level, finding the path with the fewest edges (ignoring weights)."}
+            {selectedAlgorithm?.id === 'bellman-ford' &&
+              "Bellman-Ford finds the shortest path and can handle negative weights, but is slower than Dijkstra."}
               </Text>
               </View>
               </View>
@@ -475,6 +517,7 @@ const styles = StyleSheet.create({
   },
   resultsBox: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
     backgroundColor: '#f5f5f5',
     padding: 12,
@@ -482,17 +525,35 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   resultItem: {
-    flex: 1,
+    width: '33%',
     alignItems: 'center',
+    marginBottom: 8,
   },
   resultLabel: {
     fontSize: 12,
     color: '#757575',
     marginBottom: 4,
+    textAlign: 'center',
   },
   resultValue: {
     fontWeight: 'bold',
     color: '#1976D2',
+    fontSize: 14,
+    textAlign: 'center',
+  },
+  toggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: '#f5f5f5',
+    borderRadius: 8,
+    marginBottom: 8,
+  },
+  toggleLabel: {
+    fontSize: 14,
+    color: '#333',
   },
   descriptionBox: {
     backgroundColor: '#E3F2FD',

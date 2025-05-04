@@ -1,76 +1,93 @@
+// MinHeap.ts
 export default class MinHeap<T> {
-    private data: T[] = [];
-    private comparator: (a: T, b: T) => number;
-  
-    constructor(comparator: (a: T, b: T) => number) {
-      this.comparator = comparator;
+  private heap: T[] = [];
+  private compare: (a: T, b: T) => number;
+
+  constructor(compareFn: (a: T, b: T) => number) {
+    this.compare = compareFn;
+  }
+
+  insert(value: T): void {
+    this.heap.push(value);
+    this.bubbleUp(this.heap.length - 1);
+  }
+
+  extractMin(): T | undefined {
+    if (this.heap.length === 0) return undefined;
+    const min = this.heap[0];
+    const end = this.heap.pop();
+    if (this.heap.length > 0 && end !== undefined) {
+      this.heap[0] = end;
+      this.sinkDown(0);
     }
-  
-    private parent(index: number) { return Math.floor((index - 1) / 2); }
-    private left(index: number) { return index * 2 + 1; }
-    private right(index: number) { return index * 2 + 2; }
-  
-    private swap(i: number, j: number) {
-      [this.data[i], this.data[j]] = [this.data[j], this.data[i]];
-    }
-  
-    private heapifyUp(index: number) {
-      while (index > 0 && this.comparator(this.data[index], this.data[this.parent(index)]) < 0) {
-        this.swap(index, this.parent(index));
-        index = this.parent(index);
+    return min;
+  }
+
+  peek(): T | undefined {
+    return this.heap[0];
+  }
+
+  isEmpty(): boolean {
+    return this.heap.length === 0;
+  }
+
+  remove(value: T): void {
+    const index = this.heap.indexOf(value);
+    if (index !== -1) {
+      const end = this.heap.pop();
+      if (index !== this.heap.length && end !== undefined) {
+        this.heap[index] = end;
+        if (this.compare(end, value) < 0) {
+          this.bubbleUp(index);
+        } else {
+          this.sinkDown(index);
+        }
       }
-    }
-  
-    private heapifyDown(index: number) {
-      let smallest = index;
-      const left = this.left(index);
-      const right = this.right(index);
-  
-      if (left < this.data.length && this.comparator(this.data[left], this.data[smallest]) < 0) {
-        smallest = left;
-      }
-      if (right < this.data.length && this.comparator(this.data[right], this.data[smallest]) < 0) {
-        smallest = right;
-      }
-      if (smallest !== index) {
-        this.swap(index, smallest);
-        this.heapifyDown(smallest);
-      }
-    }
-  
-    insert(item: T): void {
-      this.data.push(item);
-      this.heapifyUp(this.data.length - 1);
-    }
-  
-    extractMin(): T | undefined {
-      if (this.isEmpty()) return undefined;
-      const min = this.data[0];
-      const last = this.data.pop()!;
-      if (this.data.length > 0) {
-        this.data[0] = last;
-        this.heapifyDown(0);
-      }
-      return min;
-    }
-  
-    peek(): T | undefined {
-      return this.data[0];
-    }
-  
-    remove(item: T): void {
-      const index = this.data.findIndex((x) => x === item);
-      if (index === -1) return;
-      const last = this.data.pop()!;
-      if (index < this.data.length) {
-        this.data[index] = last;
-        this.heapifyDown(index);
-        this.heapifyUp(index);
-      }
-    }
-  
-    isEmpty(): boolean {
-      return this.data.length === 0;
     }
   }
-  
+
+  private bubbleUp(index: number): void {
+    const element = this.heap[index];
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      const parent = this.heap[parentIndex];
+      if (this.compare(element, parent) >= 0) break;
+      this.heap[index] = parent;
+      index = parentIndex;
+    }
+    this.heap[index] = element;
+  }
+
+  private sinkDown(index: number): void {
+    const element = this.heap[index];
+    const length = this.heap.length;
+    
+    while (true) {
+      let leftChildIndex = 2 * index + 1;
+      let rightChildIndex = 2 * index + 2;
+      let swapIndex = -1;
+      
+      if (leftChildIndex < length) {
+        const leftChild = this.heap[leftChildIndex];
+        if (this.compare(leftChild, element) < 0) {
+          swapIndex = leftChildIndex;
+        }
+      }
+      
+      if (rightChildIndex < length) {
+        const rightChild = this.heap[rightChildIndex];
+        if (
+          (swapIndex === -1 && this.compare(rightChild, element) < 0) ||
+          (swapIndex !== -1 && this.compare(rightChild, this.heap[swapIndex]) < 0)
+        ) {
+          swapIndex = rightChildIndex;
+        }
+      }
+      
+      if (swapIndex === -1) break;
+      this.heap[index] = this.heap[swapIndex];
+      index = swapIndex;
+    }
+    this.heap[index] = element;
+  }
+}

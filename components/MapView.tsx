@@ -1,3 +1,4 @@
+// MapView.tsx
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { StyleSheet, View, Text, ActivityIndicator, Alert } from 'react-native';
 import MapboxGL from '@rnmapbox/maps';
@@ -42,11 +43,16 @@ type MapViewProps = {
   graphLoading?: boolean;
   onBlockNode?: (nodeId: string) => void;
   isBlockingNode?: boolean;
+  showVisitedNodes: boolean;
 };
 
 const validateColor = (color: string): string => {
   const hexPattern = /^#([0-9A-F]{3}|[0-9A-F]{6})$/i;
-  return hexPattern.test(color) ? color : '#000000';
+  if (!hexPattern.test(color)) {
+    console.warn(`Invalid color value: ${color}. Defaulting to #000000.`);
+    return '#000000';
+  }
+  return color;
 };
 
 const areMapsEqual = <K, V>(map1: Map<K, V>, map2: Map<K, V>): boolean => {
@@ -68,9 +74,10 @@ const MapView: React.FC<MapViewProps> = ({
   onTapMap,
   onGraphUpdate,
   onBlockEdge,
-  graphLoading = false,
+  graphLoading,
   onBlockNode,
-  isBlockingNode = false,
+  isBlockingNode,
+  showVisitedNodes,
 }) => {
   const [camera, setCamera] = useState({
     zoomLevel: 14,
@@ -148,7 +155,9 @@ const MapView: React.FC<MapViewProps> = ({
     };
 
     loadEdges();
-  }, [nodesFetched, graph.nodes, stableOnError]);
+  }, [nodesFetched, graph.nodes]);
+
+  const stableGraph = useMemo(() => graph, [graph.nodes.size, graph.edges.size]);
 
   useEffect(() => {
     if (nodesFetched && edgesFetched) {
@@ -176,18 +185,22 @@ const MapView: React.FC<MapViewProps> = ({
     }
   }, [startPoint, endPoint]);
 
+  // Map visited nodes to osmids using closest-node matching
   useEffect(() => {
-    if (pathResult?.visitedNodes) {
-      const nodeMap = new Map<string, string>();
-      graph.nodes.forEach((node) => {
-        nodeMap.set(`${node.lng.toFixed(5)},${node.lat.toFixed(5)}`, node.osmid);
+    if (pathResult?.visitedNodes && pathResult.visitedNodes.length > 0) {
+      const visitedIds: string[] = [];
+      pathResult.visitedNodes.forEach(([lng, lat]) => {
+        for (const [osmid, node] of graph.nodes.entries()) {
+          if (Math.abs(node.lng - lng) < 0.00001 && Math.abs(node.lat - lat) < 0.00001) {
+            visitedIds.push(osmid);
+            break;
+          }
+        }
       });
-
-      const visitedIds = pathResult.visitedNodes
-        .map(([lng, lat]) => nodeMap.get(`${lng.toFixed(5)},${lat.toFixed(5)}`))
-        .filter(Boolean) as string[];
-
       setVisitedNodeIds(visitedIds);
+      console.log(`Mapped ${visitedIds.length} visited nodes to osmids`);
+    } else {
+      setVisitedNodeIds([]);
     }
   }, [pathResult, graph.nodes]);
 
@@ -204,11 +217,15 @@ const MapView: React.FC<MapViewProps> = ({
   }, [pathResult, blockedNodes, graph, onGraphUpdate]);
 
   const getPathColor = (algorithm: string) => {
-    return validateColor({
+    const color = {
       dijkstra: '#FF9800',
       'a-star': '#4CAF50',
-      'd-star-lite': '#FF5722',
-    }[algorithm] || '#2196F3');
+      'd-star': '#9C27B0',
+      'd-star-lite': '#2196F3',
+      'gbfs': '#FF5722',
+      'bellman-ford': '#FF9800',
+    }[algorithm] || '#2196F3';
+    return validateColor(color);
   };
 
   const handleFeaturePress = useCallback((event: any, source: 'nodes' | 'edges') => {
@@ -302,57 +319,55 @@ const MapView: React.FC<MapViewProps> = ({
     if (selectionMode === 'none') {
       onTapMap(event);
     }
-  }, [selectionMode, onTapMap]);
+  }, [pathResult, stableOnError]);
 
   return (
-    <View style={StyleSheet.absoluteFill}>
-      <MapboxGL.MapView
-        style={StyleSheet.absoluteFill}
-        styleURL={MapboxGL.StyleURL.Street}
-        onDidFailLoadingMap={() => stableOnError('Map failed to load')}
-        onDidFinishLoadingMap={onMapLoaded}
-        logoEnabled={true}
-        attributionEnabled={true}
-        compassEnabled={true}
-        onPress={(feature) => onTapMapHandler({ features: [feature], coordinates: { latitude: feature.geometry.coordinates[1], longitude: feature.geometry.coordinates[0] } })}
-      >
-        <MapboxGL.Camera
-          zoomLevel={camera.zoomLevel}
-          centerCoordinate={camera.centerCoordinate as [number, number]}
-          animationDuration={camera.animationDuration}
-        />
+    <MapboxGL.MapView
+    style={StyleSheet.absoluteFill}
+    styleURL={MapboxGL.StyleURL.Street}
+    onDidFailLoadingMap={(error) => stableOnError(`Map failed to load: ${error.message}`)}
+    onDidFinishLoadingMap={onMapLoaded}
+    logoEnabled={true}
+    attributionEnabled={true}
+    compassEnabled={true}
+    onPress={onTapMapHandler}
+    >
+    <MapboxGL.Camera
+    zoomLevel={camera.zoomLevel}
+    centerCoordinate={camera.centerCoordinate}
+    animationDuration={500}
+    />
 
-        <MapboxGL.ShapeSource
-          id="nodes"
-          shape={nodesGeoJSON as GeoJSON.FeatureCollection}
-          onPress={(event: { features?: any[] }) => handleFeaturePress(event, 'nodes')}
-          onLongPress={(event: { features?: any[] }) => handleNodeLongPress(event)}
-        >
-          <MapboxGL.CircleLayer
-        id="nodes-layer"
-        style={{
-          circleRadius: selectionMode === 'none' ? 3 : 8,
-          circleStrokeWidth: selectionMode === 'none' ? 1 : 2,
-          circleStrokeColor: '#fff',
-          circleColor: visitedNodeIds.length > 0
-            ? [
-          'match',
-          ['get', 'osmid'],
-          ...visitedNodeIds.flatMap(id => [id, validateColor('#FF0000')]),
+    <MapboxGL.ShapeSource
+    id="nodes"
+    shape={nodesGeoJSON}
+    onPress={(event) => handleFeaturePress(event, 'nodes')}
+    >
+    <MapboxGL.CircleLayer
+    id="nodes-layer"
+    style={{
+      circleRadius: selectionMode === 'none' ? 3 : 8,
+      circleStrokeWidth: selectionMode === 'none' ? 1 : 2,
+      circleStrokeColor: '#fff',
+      visibility: 'visible',
+      circleColor: visitedNodeIds.length > 0
+      ? [
+        'match',
+        ['get', 'osmid'],
+        ...visitedNodeIds.flatMap((id) => [id, validateColor('#FF0000')]),
           validateColor(
-            selectionMode === 'none' ? '#2196F3' : 
-            selectionMode === 'start' ? '#4CAF50' : '#F44336'
+            selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
           ),
-            ]
-            : validateColor(
-          selectionMode === 'none' ? '#2196F3' : 
-          selectionMode === 'start' ? '#4CAF50' : '#F44336'
-            ),
-        }}
-        minZoomLevel={10}
-        filter={['==', ['geometry-type'], 'Point']}
-          />
-        </MapboxGL.ShapeSource>
+      ]
+      : validateColor(
+        selectionMode === 'none' ? '#2196F3' : selectionMode === 'start' ? '#4CAF50' : '#F44336'
+      ),
+    }}
+    minZoomLevel={10}
+    filter={['==', ['geometry-type'], 'Point']}
+    hitbox={{ width: 30, height: 30 }}
+    />
+    </MapboxGL.ShapeSource>
 
         <MapboxGL.ShapeSource
           id="edges"
@@ -469,22 +484,14 @@ const MapView: React.FC<MapViewProps> = ({
           </>
         )}
 
-        {selectionMode !== 'none' && (
-          <View style={styles.selectionIndicator}>
-        <Text style={styles.selectionText}>
-          {selectionMode === 'start' ? 'Select start point' : 'Select end point'}
-        </Text>
-          </View>
-        )}
-      </MapboxGL.MapView>
-
-      {graphLoading && (
-        <View style={styles.loadingOverlay}>
-          <ActivityIndicator size="large" color="#0000ff" />
-          <Text style={styles.loadingText}>Loading map data...</Text>
-        </View>
-      )}
-    </View>
+    {selectionMode !== 'none' && (
+      <View style={styles.selectionIndicator}>
+      <Text style={styles.selectionText}>
+      {selectionMode === 'start' ? 'Select start point' : 'Select end point'}
+      </Text>
+      </View>
+    )}
+    </MapboxGL.MapView>
   );
 };
 

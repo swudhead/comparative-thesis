@@ -1,4 +1,4 @@
-// Ensure this utility exists or implement it
+// algorithms.ts
 import MinHeap from './MinHeap';
 
 interface Coord {
@@ -31,6 +31,8 @@ interface PathfindingResult {
   time: number;
   visitedNodes?: number[][];
   nodesVisited?: number;
+  edgesExplored?: number;
+  pathNodeCount?: number;
 }
 
 interface Algorithm {
@@ -69,13 +71,12 @@ export const findNearestNode = (
   nodes: Map<string, Node>,
   point: Coord,
   searchRadius: number = Infinity,
-  blockedNodes?: Set<string> // Add this parameter
+  blockedNodes?: Set<string>
 ): Node | null => {
   let nearest: Node | null = null;
   let minDistance = Infinity;
 
   for (const node of nodes.values()) {
-    // Skip blocked nodes
     if (blockedNodes?.has(node.osmid)) continue;
     
     const distance = haversineDistance(point, node);
@@ -87,6 +88,7 @@ export const findNearestNode = (
 
   return nearest;
 };
+
 class PriorityQueue<T> {
   private elements: { priority: number; element: T }[] = [];
 
@@ -144,7 +146,6 @@ class DStarLitePriorityQueue {
 const blockUserEdge = (graph: Graph, blockedEdges?: { source: string; target: string }[], blockedNodes?: Set<string>): Graph => {
   const newEdges = new Map(graph.edges);
 
-  // Block edges
   blockedEdges?.forEach(({ source, target }) => {
     newEdges.set(
       source,
@@ -154,11 +155,8 @@ const blockUserEdge = (graph: Graph, blockedEdges?: { source: string; target: st
     );
   });
 
-  // Remove edges connected to blocked nodes
   blockedNodes?.forEach(nodeId => {
-    // Remove outgoing edges
     newEdges.delete(nodeId);
-    // Remove incoming edges
     newEdges.forEach((edges, source) => {
       newEdges.set(
         source,
@@ -178,7 +176,7 @@ export const dijkstraPathfinding = async (
   graph: Graph,
   startCoord: Coord,
   goalCoord: Coord,
-  algorithmId: string
+  algorithmId: string = 'dijkstra'
 ): Promise<PathfindingResult> => {
   if (!isGraphConnected(graph)) {
     throw new Error("The graph is not fully connected.");
@@ -193,6 +191,12 @@ export const dijkstraPathfinding = async (
   const distances = new Map<string, number>();
   const previous = new Map<string, string | null>();
   const pq = new PriorityQueue<string>();
+  const visitedNodes: number[][] = [];
+  let edgesExplored = 0;
+
+  const heuristic = (node: Node, endNode: Node): number => {
+    return haversineDistance(node, endNode);
+  };
 
   graph.nodes.forEach((_, osmid) => {
     distances.set(osmid, Infinity);
@@ -200,51 +204,63 @@ export const dijkstraPathfinding = async (
   });
 
   distances.set(startNode.osmid, 0);
-  pq.enqueue(startNode.osmid, 0);
+  pq.enqueue(startNode.osmid, algorithmId === 'a-star' ? heuristic(startNode, goalNode) : 0);
 
   while (!pq.isEmpty()) {
     const current = pq.dequeue()!;
+    if (visited.has(current)) continue;
+    
     visited.add(current);
+    const node = graph.nodes.get(current)!;
+    visitedNodes.push([node.lng, node.lat]);
 
     if (current === goalNode.osmid) break;
 
     const edges = graph.edges.get(current) || [];
+    edgesExplored += edges.length;
     for (const edge of edges) {
-      // Add blocked node check
       if (edge.blocked || graph.blockedNodes?.has(edge.target)) continue;
       
       const alt = distances.get(current)! + edge.weight;
       if (alt < distances.get(edge.target)!) {
         distances.set(edge.target, alt);
         previous.set(edge.target, current);
-        pq.enqueue(edge.target, alt);
+        const priority = algorithmId === 'a-star' 
+          ? alt + heuristic(graph.nodes.get(edge.target)!, goalNode)
+          : alt;
+        pq.enqueue(edge.target, priority);
       }
     }
   }
 
-  // Reconstruct path
   const path: number[][] = [];
-  let current = goalNode.osmid;
+  let totalDistance = 0;
+  let current: string | null = goalNode.osmid;
+
   while (current) {
     const node = graph.nodes.get(current)!;
     path.unshift([node.lng, node.lat]);
-    current = previous.get(current) || '';
+    const prev = previous.get(current);
+    if (prev) {
+      const edges = graph.edges.get(prev) || [];
+      const edge = edges.find(e => e.target === current);
+      if (edge) totalDistance += edge.weight;
+    }
+    current = prev || null;
   }
 
   if (path.length === 0) throw new Error("No path found");
 
   const endTime = performance.now();
-  const distance = distances.get(goalNode.osmid)! / 1000; // Convert to km
 
   return {
     path,
-    distance,
+    distance: totalDistance / 1000,
     time: endTime - startTime,
-    visitedNodes: Array.from(visited).map(id => {
-      const n = graph.nodes.get(id)!;
-      return [n.lng, n.lat];
-    }),
+    visitedNodes,
     nodesVisited: visited.size,
+    edgesExplored,
+    pathNodeCount: path.length,
   };
 };
 
@@ -253,77 +269,105 @@ export const aStarPathfinding = async (
   startCoord: Coord,
   goalCoord: Coord
 ): Promise<PathfindingResult> => {
-  if (!isGraphConnected(graph)) {
-    throw new Error("The graph is not fully connected.");
+  return dijkstraPathfinding(graph, startCoord, goalCoord, 'a-star');
+};
+
+export async function bellmanFordPathfinding(
+  graph: Graph,
+  start: Coord,
+  end: Coord
+): Promise<PathfindingResult> {
+  const startTime = performance.now();
+
+  if (!graph || !graph.nodes || !graph.edges) {
+    throw new Error('Invalid graph: nodes or edges are missing');
   }
 
-  const startNode = findNearestNode(graph.nodes, startCoord);
-  const goalNode = findNearestNode(graph.nodes, goalCoord);
-  if (!startNode || !goalNode) throw new Error("Start or goal node not found");
+  const startNode = findNearestNode(graph.nodes, start);
+  const goalNode = findNearestNode(graph.nodes, end);
+  if (!startNode || !goalNode) {
+    throw new Error('Start or end node not found in the graph.');
+  }
 
-  const startTime = performance.now();
-  const openSet = new PriorityQueue<string>();
-  const cameFrom = new Map<string, string>();
-  const gScore = new Map<string, number>();
-  const fScore = new Map<string, number>();
+  const distances = new Map<string, number>();
+  const previous = new Map<string, string | null>();
+  const visitedNodes: number[][] = [];
   const visited = new Set<string>();
+  let edgesExplored = 0;
+  let totalDistance = 0;
 
-  graph.nodes.forEach((_, osmid) => {
-    gScore.set(osmid, Infinity);
-    fScore.set(osmid, Infinity);
-  });
+  for (const node of graph.nodes.keys()) {
+    distances.set(node, Infinity);
+    previous.set(node, null);
+  }
+  distances.set(startNode.osmid, 0);
+  visited.add(startNode.osmid);
+  visitedNodes.push([startNode.lng, startNode.lat]);
 
-  gScore.set(startNode.osmid, 0);
-  fScore.set(startNode.osmid, haversineDistance(startNode, goalNode));
-  openSet.enqueue(startNode.osmid, fScore.get(startNode.osmid)!);
-
-  while (!openSet.isEmpty()) {
-    const current = openSet.dequeue()!;
-    visited.add(current);
-
-    if (current === goalNode.osmid) break;
-
-    const edges = graph.edges.get(current) || [];
-    for (const edge of edges) {
-      // Add blocked node check
-      if (edge.blocked || graph.blockedNodes?.has(edge.target)) continue;
-
-      const tentativeGScore = gScore.get(current)! + edge.weight;
-      if (tentativeGScore < gScore.get(edge.target)!) {
-        cameFrom.set(edge.target, current);
-        gScore.set(edge.target, tentativeGScore);
-        const targetNode = graph.nodes.get(edge.target)!;
-        fScore.set(edge.target, tentativeGScore + haversineDistance(targetNode, goalNode));
-        openSet.enqueue(edge.target, fScore.get(edge.target)!);
+  const V = graph.nodes.size;
+  for (let i = 0; i < V - 1; i++) {
+    let changesMade = false;
+    for (const [source, edgeList] of graph.edges.entries()) {
+      for (const edge of edgeList) {
+        const newDist = distances.get(source)! + edge.weight;
+        if (newDist < distances.get(edge.target)!) {
+          distances.set(edge.target, newDist);
+          previous.set(edge.target, source);
+          if (!visited.has(edge.target)) {
+            visited.add(edge.target);
+            const targetNode = graph.nodes.get(edge.target)!;
+            visitedNodes.push([targetNode.lng, targetNode.lat]);
+          }
+          changesMade = true;
+        }
+        edgesExplored++;
       }
+    }
+    if (!changesMade) break;
+  }
+
+  for (const [source, edgeList] of graph.edges.entries()) {
+    for (const edge of edgeList) {
+      if (distances.get(source)! + edge.weight < distances.get(edge.target)!) {
+        throw new Error('Graph contains a negative cycle');
+      }
+      edgesExplored++;
     }
   }
 
-  // Reconstruct path
+  if (distances.get(goalNode.osmid)! === Infinity) {
+    throw new Error('No path found between start and end nodes.');
+  }
+
   const path: number[][] = [];
-  let current = goalNode.osmid;
+  let current: string | null = goalNode.osmid;
+
   while (current) {
     const node = graph.nodes.get(current)!;
     path.unshift([node.lng, node.lat]);
-    current = cameFrom.get(current) || '';
+    const prev = previous.get(current);
+    if (prev) {
+      const edges = graph.edges.get(prev) || [];
+      const edge = edges.find(e => e.target === current);
+      if (edge) totalDistance += edge.weight;
+    }
+    current = prev || null;
   }
 
   if (path.length === 0) throw new Error("No path found");
 
   const endTime = performance.now();
-  const distance = gScore.get(goalNode.osmid)! / 1000; // Convert to km
 
   return {
     path,
-    distance,
+    distance: totalDistance / 1000,
     time: endTime - startTime,
-    visitedNodes: Array.from(visited).map(id => {
-      const n = graph.nodes.get(id)!;
-      return [n.lng, n.lat];
-    }),
     nodesVisited: visited.size,
+    visitedNodes,
+    edgesExplored,
+    pathNodeCount: path.length,
   };
-};
+}
 
 function calculateKey(nodeId: string, startNode: Node, km: number, g: Map<string, number>, rhs: Map<string, number>, heuristic: (a: Node, b: Node) => number, graph: Graph): [number, number] {
   const node = graph.nodes.get(nodeId)!;
@@ -334,26 +378,30 @@ function calculateKey(nodeId: string, startNode: Node, km: number, g: Map<string
   return [min + h + km, min];
 }
 
+// Added debugging logs to trace the values of key variables in dStarLitePathfinding
 export const dStarLitePathfinding = async (
   graph: Graph,
   startCoord: Coord,
   goalCoord: Coord,
   blockedEdges?: { source: string; target: string }[]
 ): Promise<PathfindingResult> => {
+  const heuristic = (a: Node, b: Node) => haversineDistance(a, b);
   const updatedGraph = blockUserEdge(graph, blockedEdges);
   const startNode = findNearestNode(updatedGraph.nodes, startCoord);
   const goalNode = findNearestNode(updatedGraph.nodes, goalCoord);
   if (!startNode || !goalNode) throw new Error('Start or goal node not found');
 
+  console.log('Start Node:', startNode);
+  console.log('Goal Node:', goalNode);
+
   const g = new Map<string, number>();
   const rhs = new Map<string, number>();
   const pq = new MinHeap<string>((a, b) => {
-    const ka = calculateKey(a, startNode, km, g, rhs, heuristic, updatedGraph);
-    const kb = calculateKey(b, startNode, km, g, rhs, heuristic, updatedGraph);
+    const ka = calculateKey(a, startNode, 0, g, rhs, heuristic, updatedGraph);
+    const kb = calculateKey(b, startNode, 0, g, rhs, heuristic, updatedGraph);
     return ka[0] !== kb[0] ? ka[0] - kb[0] : ka[1] - kb[1];
   });
 
-  const heuristic = (a: Node, b: Node) => haversineDistance(a, b);
   let km = 0;
 
   updatedGraph.nodes.forEach((_, osmid) => {
@@ -380,7 +428,6 @@ export const dStarLitePathfinding = async (
   };
 
   const visitedNodes: string[] = [];
-
   const computeShortestPath = () => {
     while (
       !pq.isEmpty() &&
@@ -389,12 +436,14 @@ export const dStarLitePathfinding = async (
         (rhs.get(startNode.osmid) ?? Infinity) !== (g.get(startNode.osmid) ?? Infinity))
     ) {
       const u = pq.extractMin()!;
-      visitedNodes.push(u); // Track visited nodes
+      visitedNodes.push(u);
+      console.log('Processing node:', u);
+      console.log('g:', g.get(u), 'rhs:', rhs.get(u));
+
       if ((g.get(u) ?? Infinity) > (rhs.get(u) ?? Infinity)) {
         g.set(u, rhs.get(u)!);
         const neighbors = updatedGraph.edges.get(u) ?? [];
         for (const edge of neighbors) {
-          // Add blocked node check
           if (edge.blocked || updatedGraph.blockedNodes?.has(edge.target)) continue;
           updateVertex(edge.target);
         }
@@ -403,7 +452,6 @@ export const dStarLitePathfinding = async (
         updateVertex(u);
         const neighbors = updatedGraph.edges.get(u) ?? [];
         for (const edge of neighbors) {
-          // Add blocked node check
           if (edge.blocked || updatedGraph.blockedNodes?.has(edge.target)) continue;
           updateVertex(edge.target);
         }
@@ -448,40 +496,127 @@ export const dStarLitePathfinding = async (
     );
   }, 0) / 1000;
 
+  console.log('Path:', path);
+  console.log('Visited Nodes:', visitedNodes);
+
   return {
-    path,
-    distance,
+    path: path,
+    distance: distance,
     time: endTime - startTime,
     visitedNodes: visitedNodes.map(id => {
       const n = updatedGraph.nodes.get(id)!;
       return [n.lng, n.lat];
     }),
     nodesVisited: visitedNodes.length,
+    edgesExplored: visitedNodes.length * 2, // Adjust this with actual edge count if available
+    pathNodeCount: path.length,
   };
 };
 
-export const algorithms: Algorithm[] = [
-  {
-    id: 'dijkstra',
-    name: 'Dijkstra',
-    description: "Finds shortest path by exploring all possible directions equally"
-  },
-  {
-    id: 'a-star',
-    name: 'A*',
-    description: "Uses heuristics to find shortest path more efficiently"
-  },
-  {
-    id: 'd-star-lite',
-    name: 'D* Lite',
-    description: "Optimized for dynamic environments with changing edge costs"
+// GBFS Implementation (Greedy Best-First Search, uses only heuristic)
+export async function gbfsPathfinding(
+  graph: Graph,
+  start: Coord,
+  end: Coord
+): Promise<PathfindingResult> {
+  const startTime = performance.now();
+
+  if (!graph || !graph.nodes || !graph.edges) {
+    throw new Error('Invalid graph: nodes or edges are missing');
   }
+
+  const startNode = findNearestNode(graph.nodes, start);
+  const endNode = findNearestNode(graph.nodes, end);
+  if (!startNode || !endNode) {
+    throw new Error('Start or end node not found in the graph.');
+  }
+
+  const hScores = new Map<string, number>(); // Heuristic scores (estimated distance to end)
+  const previous = new Map<string, string | null>();
+  const pq = new PriorityQueue<string>();
+  const visited = new Set<string>();
+  const visitedNodes: number[][] = [];
+  let edgesExplored = 0;
+
+  // Initialize
+  for (const node of graph.nodes.keys()) {
+    hScores.set(node, Infinity);
+    previous.set(node, null);
+  }
+  hScores.set(startNode.osmid, haversineDistance(startNode, endNode));
+  pq.enqueue(startNode.osmid, hScores.get(startNode.osmid)!);
+  visitedNodes.push([startNode.lng, startNode.lat]);
+
+  // GBFS main loop: Process nodes based on heuristic score
+  while (!pq.isEmpty()) {
+    const current = pq.dequeue();
+    if (!current) break;
+
+    if (visited.has(current)) continue;
+    visited.add(current);
+
+    const node = graph.nodes.get(current)!;
+    visitedNodes.push([node.lng, node.lat]);
+
+    if (current === endNode.osmid) break;
+
+    const edges = graph.edges.get(current) || [];
+    edgesExplored += edges.length;
+    for (const edge of edges) {
+      const neighbor = edge.target;
+      if (!visited.has(neighbor)) {
+        hScores.set(neighbor, haversineDistance(graph.nodes.get(neighbor)!, endNode));
+        previous.set(neighbor, current);
+        pq.enqueue(neighbor, hScores.get(neighbor)!);
+      }
+    }
+  }
+
+  if (!visited.has(endNode.osmid)) {
+    throw new Error('No path found between start and end nodes.');
+  }
+
+  // Reconstruct path and calculate actual distance using edge weights
+  const path: number[][] = [];
+  let totalDistance = 0;
+  let current: string | null = endNode.osmid;
+
+  while (current) {
+    const node = graph.nodes.get(current)!;
+    path.unshift([node.lng, node.lat]);
+    const prev = previous.get(current);
+    if (prev) {
+      const edges = graph.edges.get(prev) || [];
+      const edge = edges.find(e => e.target === current);
+      if (edge) totalDistance += edge.weight;
+    }
+    current = prev;
+  }
+
+  const endTime = performance.now();
+
+  return {
+    path,
+    distance: totalDistance / 1000,
+    time: endTime - startTime,
+    nodesVisited: visited.size,
+    visitedNodes,
+    edgesExplored,
+    pathNodeCount: path.length,
+  };
+}
+
+export const algorithms: Algorithm[] = [
+  { id: 'dijkstra', name: 'Dijkstra', description: "Finds shortest path by exploring all possible directions equally" },
+  { id: 'a-star', name: 'A*', description: "Uses heuristics to find shortest path more efficiently" },
+  { id: 'd-star-lite', name: 'D* Lite', description: "Optimized for dynamic environments with changing edge costs" },
+  { id: 'gbfs', name: 'Greedy Best-First Search', description: "Prioritizes nodes closest to the destination" },
+  { id: 'bellman-ford', name: 'Bellman-Ford', description: "Handles negative weights but is slower than Dijkstra" }
 ];
 
 export const getPerformanceMetrics = (algorithmId: string, distance: number) => {
-  // These are example performance metrics - adjust based on your actual measurements
-  const baseTime = distance * 10; // ms per km
-  const baseNodes = distance * 100; // nodes per km
+  const baseTime = distance * 10;
+  const baseNodes = distance * 100;
   
   const metrics: Record<string, { time: string; nodes: number }> = {
     dijkstra: {
@@ -502,7 +637,6 @@ export const getPerformanceMetrics = (algorithmId: string, distance: number) => 
 };
 
 export function isGraphConnected(graph: Graph): boolean {
-  // Start with first unblocked node
   const unblockedNodes = Array.from(graph.nodes.values())
     .filter(node => !graph.blockedNodes?.has(node.osmid));
   
@@ -517,7 +651,6 @@ export function isGraphConnected(graph: Graph): boolean {
       visited.add(current);
       const edges = graph.edges.get(current) || [];
       for (const edge of edges) {
-        // Skip blocked nodes and edges
         if (!edge.blocked && !graph.blockedNodes?.has(edge.target)) {
           stack.push(edge.target);
         }
@@ -525,14 +658,13 @@ export function isGraphConnected(graph: Graph): boolean {
     }
   }
 
-  // Compare against unblocked nodes count
   return visited.size === unblockedNodes.length;
 }
 
 async function retryPathfinding(
   pathfindingFunction: () => Promise<PathfindingResult>,
   maxRetries: number = 3,
-  delay: number = 300 // milliseconds
+  delay: number = 300
 ): Promise<PathfindingResult> {
   let retries = 0;
   while (retries < maxRetries) {
@@ -605,9 +737,8 @@ const testGraph: Graph = {
   edges: new Map([
     ['1', [{ source: '1', target: '2', weight: 1 }]],
     ['2', [{ source: '2', target: '1', weight: 1 }]],
-    ['3', []], // Node 3 is isolated
+    ['3', []],
   ]),
 };
 
 console.log('Is testGraph connected?', isGraphConnected(testGraph));
-
